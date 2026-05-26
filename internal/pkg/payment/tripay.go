@@ -133,6 +133,35 @@ func (c *TripayClient) CreateTransaction(ctx context.Context, req CreateTransact
 	return &result, nil
 }
 
+// TestConnection verifies that the Tripay API key is valid by calling the merchant profile endpoint.
+// Returns nil if the credentials are valid, or an error with a descriptive message.
+func (c *TripayClient) TestConnection(ctx context.Context) error {
+	url := c.baseURL + "/merchant/profile"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("tidak dapat terhubung ke Tripay: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("respons Tripay tidak valid: %w", err)
+	}
+	if !result.Success {
+		return fmt.Errorf("Tripay: %s", result.Message)
+	}
+	return nil
+}
+
 // GetTransaction retrieves the status of a transaction by Tripay reference.
 func (c *TripayClient) GetTransaction(ctx context.Context, reference string) (*TransactionStatusResponse, error) {
 	url := fmt.Sprintf("%s/transaction/detail?reference=%s", c.baseURL, reference)

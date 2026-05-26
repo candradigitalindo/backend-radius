@@ -1,8 +1,0 @@
-             id             |         tenant_id          |             name             |    type    | days_offset | is_active 
-----------------------------+----------------------------+------------------------------+------------+-------------+-----------
- 01KNDZBEFORE1DAY00000002   | 01KNB5AZ41SE1TJ0JNB265FYFW | Pengingat H-1 Jatuh Tempo    | before_due |           1 | t
- 01KNDZONDUEDAY0000000003   | 01KNB5AZ41SE1TJ0JNB265FYFW | Pengingat Hari H Jatuh Tempo | on_due     |           0 | t
- 01KNDZISOLIRNOTIF0000004   | 01KNB5AZ41SE1TJ0JNB265FYFW | Notifikasi Isolir            | isolir     |           0 | t
- 01KNDZINVOICECREATED0001   | 01KNB5AZ41SE1TJ0JNB265FYFW | Notifikasi Invoice Baru      | before_due |           0 | t
-(4 rows)
-

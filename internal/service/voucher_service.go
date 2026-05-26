@@ -394,8 +394,33 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 	var expiredAt time.Time
 
 	switch tenant.PGProvider {
+	case "xendit":
+		client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+		resp, err := client.CreateInvoice(ctx, payment.XenditCreateInvoiceRequest{
+			ExternalID:      orderID,
+			Amount:          product.Price,
+			Description:     fmt.Sprintf("Voucher %s", product.Name),
+			CustomerName:    input.BuyerName,
+			CustomerPhone:   input.BuyerPhone,
+			SuccessRedirect: input.ReturnURL,
+			FailureRedirect: input.ReturnURL,
+			CallbackURL:     s.baseURL + "/api/v1/webhooks/xendit/voucher",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create xendit invoice: %w", err)
+		}
+		gatewayTrxID = orderID
+		paymentURL = resp.InvoiceURL
+		gateway = "xendit"
+		expiredAt = time.Now().Add(24 * time.Hour)
+		if resp.ExpiryDate != "" {
+			if t, err := time.Parse(time.RFC3339, resp.ExpiryDate); err == nil {
+				expiredAt = t
+			}
+		}
+
 	case "midtrans":
-		client := payment.NewMidtransClient(tenant.PGSecretKey, false)
+		client := payment.NewMidtransClient(tenant.PGSecretKey, tenant.PGSandbox)
 		resp, err := client.CreateTransaction(ctx, payment.MidtransCreateRequest{
 			OrderID:         orderID,
 			GrossAmount:     product.Price,
@@ -416,7 +441,7 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 		expiredAt = time.Now().Add(24 * time.Hour)
 
 	default: // tripay
-		client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, false)
+		client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
 		resp, err := client.CreateTransaction(ctx, payment.CreateTransactionRequest{
 			Method:        input.PaymentMethod,
 			MerchantRef:   orderID,
@@ -479,7 +504,7 @@ func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, payloa
 	if tenant == nil || tenant.PGSecretKey == "" {
 		return fmt.Errorf("payment gateway belum dikonfigurasi")
 	}
-	client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, false)
+	client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
 	if !client.VerifyWebhookSignature(payload) {
 		return fmt.Errorf("signature Tripay tidak valid")
 	}
@@ -523,7 +548,7 @@ func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, n pa
 	if tenant == nil || tenant.PGSecretKey == "" {
 		return fmt.Errorf("payment gateway belum dikonfigurasi")
 	}
-	client := payment.NewMidtransClient(tenant.PGSecretKey, false)
+	client := payment.NewMidtransClient(tenant.PGSecretKey, tenant.PGSandbox)
 	if !client.VerifyWebhookSignature(n) {
 		return fmt.Errorf("signature Midtrans tidak valid")
 	}
@@ -539,6 +564,48 @@ func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, n pa
 			return fmt.Errorf("update voucher payment: %w", err)
 		}
 		// Release voucher back to available
+		_ = s.voucherRepo.UpdateStatus(ctx, vp.VoucherID, "available")
+	}
+
+	return nil
+}
+
+// ProcessVoucherXenditWebhook handles a Xendit Invoice callback for a voucher payment.
+func (s *VoucherService) ProcessVoucherXenditWebhook(ctx context.Context, callbackToken string, payload payment.XenditCallbackPayload) error {
+	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.ExternalID)
+	if err != nil {
+		return fmt.Errorf("find voucher payment: %w", err)
+	}
+	if vp == nil {
+		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk external_id %s", payload.ExternalID)
+	}
+
+	// Verify callback token
+	if s.tenantRepo == nil {
+		return fmt.Errorf("tenant repo tidak dikonfigurasi")
+	}
+	tenant, err := s.tenantRepo.FindByID(ctx, vp.TenantID)
+	if err != nil {
+		return fmt.Errorf("muat tenant: %w", err)
+	}
+	if tenant == nil || tenant.PGSecretKey == "" {
+		return fmt.Errorf("payment gateway belum dikonfigurasi")
+	}
+	client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+	if !client.VerifyWebhookToken(callbackToken) {
+		return fmt.Errorf("token Xendit tidak valid")
+	}
+
+	if payment.IsXenditPaymentSuccess(payload) {
+		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "paid"); err != nil {
+			return fmt.Errorf("update voucher payment: %w", err)
+		}
+		s.sendVoucherTobuyer(ctx, vp)
+
+	} else if payment.IsXenditPaymentFailed(payload) {
+		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "failed"); err != nil {
+			return fmt.Errorf("update voucher payment: %w", err)
+		}
 		_ = s.voucherRepo.UpdateStatus(ctx, vp.VoucherID, "available")
 	}
 

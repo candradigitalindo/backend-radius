@@ -376,3 +376,30 @@ func (s *SubscriptionService) ProcessSubMidtransWebhook(ctx context.Context, n p
 	_, err = s.ConfirmPayment(ctx, order.ID, n.PaymentType, n.TransactionID)
 	return err
 }
+
+// ProcessSubXenditWebhook handles Xendit Invoice callback for subscription orders.
+func (s *SubscriptionService) ProcessSubXenditWebhook(ctx context.Context, callbackToken string, payload payment.XenditCallbackPayload) error {
+	if !payment.IsXenditPaymentSuccess(payload) {
+		log.Printf("[subscription webhook] xendit status=%s (ignored)", payload.Status)
+		return nil
+	}
+
+	order, err := s.subRepo.FindOrderByPaymentRef(ctx, payload.ExternalID)
+	if err != nil {
+		return err
+	}
+	if order == nil {
+		return fmt.Errorf("subscription order not found for external_id=%s", payload.ExternalID)
+	}
+	if order.Status != "pending" {
+		return nil // already processed
+	}
+
+	method := payload.PaymentMethod
+	if payload.PaymentChannel != "" {
+		method = payload.PaymentChannel
+	}
+
+	_, err = s.ConfirmPayment(ctx, order.ID, method, payload.ID)
+	return err
+}

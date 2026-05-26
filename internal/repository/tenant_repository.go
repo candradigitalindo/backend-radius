@@ -72,6 +72,7 @@ func (r *tenantRepository) FindByID(ctx context.Context, tenantID string) (*mode
 		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period, COALESCE(default_billing_type,'fixed'),
 		       plan, plan_expires_at, max_customers,
 		       COALESCE(wa_api_key,''), COALESCE(wa_sender,''), COALESCE(pg_provider,''), COALESCE(pg_api_key,''), COALESCE(pg_secret_key,''), COALESCE(pg_merchant_id,''),
+		       COALESCE(pg_sandbox, true),
 		       is_active, created_at, updated_at
 		FROM tenants
 		WHERE id = $1
@@ -84,6 +85,7 @@ func (r *tenantRepository) FindByID(ctx context.Context, tenantID string) (*mode
 		&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod, &t.DefaultBillingType,
 		&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
 		&t.WAAPIKey, &t.WASender, &t.PGProvider, &t.PGAPIKey, &t.PGSecretKey, &t.PGMerchantID,
+		&t.PGSandbox,
 		&t.IsActive, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -152,13 +154,15 @@ func (r *tenantRepository) UpdateSettings(ctx context.Context, tenant *model.Ten
 		UPDATE tenants SET
 			wa_api_key = $1, wa_sender = $2,
 			pg_provider = $3, pg_api_key = $4, pg_secret_key = $5, pg_merchant_id = $6,
-			updated_at = $7
-		WHERE id = $8
+			pg_sandbox = $7,
+			updated_at = $8
+		WHERE id = $9
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		tenant.WAAPIKey, tenant.WASender,
 		tenant.PGProvider, tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID,
+		tenant.PGSandbox,
 		tenant.UpdatedAt,
 		tenant.ID,
 	)

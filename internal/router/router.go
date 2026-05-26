@@ -158,6 +158,9 @@ func Setup(app *fiber.App, deps *Dependencies) {
 		"midtrans":             baseURL + "/api/v1/webhooks/midtrans",
 		"midtrans_voucher":     baseURL + "/api/v1/webhooks/midtrans/voucher",
 		"midtrans_subscription": baseURL + "/api/v1/webhooks/subscription/midtrans",
+		"xendit":               baseURL + "/api/v1/webhooks/xendit",
+		"xendit_voucher":       baseURL + "/api/v1/webhooks/xendit/voucher",
+		"xendit_subscription":  baseURL + "/api/v1/webhooks/subscription/xendit",
 	})
 	invoiceHandler := handler.NewInvoiceHandler(invoiceService)
 	ticketHandler := handler.NewTicketHandler(ticketService)
@@ -247,10 +250,13 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	webhooks := v1.Group("/webhooks")
 	webhooks.Post("/tripay", publicLimiter, webhookHandler.TripayCallback)
 	webhooks.Post("/midtrans", publicLimiter, webhookHandler.MidtransCallback)
+	webhooks.Post("/xendit", publicLimiter, webhookHandler.XenditCallback)
 	webhooks.Post("/tripay/voucher", publicLimiter, webhookHandler.TripayVoucherCallback)
 	webhooks.Post("/midtrans/voucher", publicLimiter, webhookHandler.MidtransVoucherCallback)
+	webhooks.Post("/xendit/voucher", publicLimiter, webhookHandler.XenditVoucherCallback)
 	webhooks.Post("/subscription/tripay", publicLimiter, webhookHandler.TripaySubscriptionCallback)
 	webhooks.Post("/subscription/midtrans", publicLimiter, webhookHandler.MidtransSubscriptionCallback)
+	webhooks.Post("/subscription/xendit", publicLimiter, webhookHandler.XenditSubscriptionCallback)
 
 	// Public payment page
 	publicPay := v1.Group("/public/pay")
@@ -313,6 +319,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	protected.Get("/tenant", tenantHandler.GetCurrent)
 	protected.Put("/tenant", tenantHandler.Update)
 	protected.Put("/tenant/settings", tenantHandler.UpdateSettings)
+	protected.Post("/tenant/settings/test", tenantHandler.TestPGConnection)
 	protected.Get("/tenant/webhook-urls", tenantHandler.GetWebhookURLs)
 
 	// Tenant subscription routes

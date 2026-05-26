@@ -216,7 +216,7 @@ func (s *BroadcastService) StartScheduler() {
 			s.ResumePendingBroadcasts()
 		}
 	}()
-	log.Println("[broadcast-scheduler] started - checks pending broadcasts every hour")
+	// scheduler started — no log needed, it's a background goroutine
 }
 
 func (s *BroadcastService) GetByID(ctx context.Context, tenantID, broadcastID string) (*model.Broadcast, error) {

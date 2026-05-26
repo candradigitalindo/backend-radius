@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
+	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 )
 
@@ -61,6 +63,7 @@ type UpdateSettingsInput struct {
 	PGAPIKey     string
 	PGSecretKey  string
 	PGMerchantID string
+	PGSandbox    bool
 }
 
 func (s *TenantService) Create(ctx context.Context, input CreateTenantInput) (*model.Tenant, error) {
@@ -194,10 +197,51 @@ func (s *TenantService) UpdateSettings(ctx context.Context, tenantID string, inp
 	tenant.PGAPIKey = input.PGAPIKey
 	tenant.PGSecretKey = input.PGSecretKey
 	tenant.PGMerchantID = input.PGMerchantID
+	tenant.PGSandbox = input.PGSandbox
 
 	return s.tenantRepo.UpdateSettings(ctx, tenant)
 }
 
 func (s *TenantService) List(ctx context.Context, filter repository.TenantFilter) ([]model.Tenant, int, error) {
 	return s.tenantRepo.List(ctx, filter)
+}
+
+// TestPGConnection verifies the payment gateway credentials configured for the tenant.
+// It instantiates the appropriate client and calls a lightweight authenticated endpoint.
+// Returns nil if the connection is successful, or an error with a descriptive message.
+func (s *TenantService) TestPGConnection(ctx context.Context, tenantID string) error {
+	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if tenant == nil {
+		return ErrTenantNotFound
+	}
+
+	if tenant.PGProvider == "" {
+		return fmt.Errorf("payment gateway belum dikonfigurasi")
+	}
+	if tenant.PGAPIKey == "" {
+		return fmt.Errorf("API Key payment gateway belum diisi")
+	}
+
+	switch tenant.PGProvider {
+	case "tripay":
+		if tenant.PGSecretKey == "" || tenant.PGMerchantID == "" {
+			return fmt.Errorf("Tripay: Private Key dan Merchant Code wajib diisi")
+		}
+		client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
+		return client.TestConnection(ctx)
+
+	case "midtrans":
+		client := payment.NewMidtransClient(tenant.PGAPIKey, tenant.PGSandbox)
+		return client.TestConnection(ctx)
+
+	case "xendit":
+		client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+		return client.TestConnection(ctx)
+
+	default:
+		return fmt.Errorf("provider payment gateway '%s' tidak didukung", tenant.PGProvider)
+	}
 }

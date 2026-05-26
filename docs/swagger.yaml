@@ -1058,6 +1058,13 @@ components:
         plan: { type: string }
         plan_expires_at: { type: string, format: date-time, nullable: true }
         max_customers: { type: integer }
+        wa_api_key: { type: string, description: "WhatsApp API key (only visible to owner)" }
+        wa_sender: { type: string, description: "WhatsApp sender number" }
+        pg_provider: { type: string, enum: [tripay, midtrans, xendit], description: "Payment gateway provider" }
+        pg_api_key: { type: string, description: "PG API key / Xendit secret key (only visible to owner)" }
+        pg_secret_key: { type: string, description: "PG secret key / Xendit webhook verification token (only visible to owner)" }
+        pg_merchant_id: { type: string, description: "PG merchant ID (Tripay only)" }
+        pg_sandbox: { type: boolean, default: true, description: "Use sandbox/test mode for payment gateway" }
         is_active: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -3595,7 +3602,18 @@ paths:
   /tenant/settings:
     put:
       tags: [Tenants]
-      summary: Update tenant integration settings
+      summary: Update tenant integration settings (WhatsApp & Payment Gateway)
+      description: |
+        Update payment gateway and WhatsApp credentials.
+
+        **Payment Gateway Providers:**
+        - `tripay` — pg_api_key = API Key, pg_secret_key = Private Key, pg_merchant_id = Merchant Code
+        - `midtrans` — pg_api_key = Client Key, pg_secret_key = Server Key (pg_merchant_id not used)
+        - `xendit` — pg_api_key = Secret Key (xnd_...), pg_secret_key = Webhook Verification Token (from Xendit Dashboard → Settings → Callbacks), pg_merchant_id not used
+
+        **pg_sandbox:** Set to `true` for testing (sandbox/development mode), `false` for production.
+        For Xendit, sandbox vs production is determined by the API key prefix (`xnd_development_` vs `xnd_production_`),
+        but this flag is still stored for consistency.
       requestBody:
         required: true
         content:
@@ -3603,18 +3621,100 @@ paths:
             schema:
               type: object
               properties:
-                wa_api_key: { type: string }
-                wa_sender: { type: string }
-                pg_provider: { type: string }
-                pg_api_key: { type: string }
-                pg_secret_key: { type: string }
-                pg_merchant_id: { type: string }
+                wa_api_key: { type: string, description: "WhatsApp API key" }
+                wa_sender: { type: string, description: "WhatsApp sender number (e.g. 628xxx)" }
+                pg_provider:
+                  type: string
+                  enum: [tripay, midtrans, xendit]
+                  description: "Payment gateway provider"
+                pg_api_key:
+                  type: string
+                  description: "Tripay: API Key | Midtrans: Client Key | Xendit: Secret Key (xnd_...)"
+                pg_secret_key:
+                  type: string
+                  description: "Tripay: Private Key | Midtrans: Server Key | Xendit: Webhook Verification Token"
+                pg_merchant_id:
+                  type: string
+                  description: "Tripay: Merchant Code (not used for Midtrans/Xendit)"
+                pg_sandbox:
+                  type: boolean
+                  default: true
+                  description: "true = sandbox/test mode, false = production"
       responses:
         "200":
           description: Settings updated
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
+
+  /tenant/settings/test:
+    post:
+      tags: [Tenants]
+      summary: Test payment gateway connection
+      description: |
+        Verifies that the payment gateway credentials configured for the current tenant are valid
+        by making a lightweight authenticated request to the provider's API.
+
+        - **Tripay:** calls `/merchant/profile` with the API Key
+        - **Midtrans:** calls `/v2/payment-types` with the Server Key (Basic Auth)
+        - **Xendit:** calls `/balance` with the Secret Key (Basic Auth)
+
+        Returns `200 OK` with `success: true` if the credentials are valid.
+        Returns `400 Bad Request` with `success: false` and an error message if the credentials are invalid or the gateway is unreachable.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Connection successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "Koneksi payment gateway berhasil" }
+        "400":
+          description: Connection failed (invalid credentials or gateway unreachable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: false }
+                  error: { type: string, example: "Tripay: Invalid API Key" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /tenant/webhook-urls:
+    get:
+      tags: [Tenants]
+      summary: Get webhook URLs to register in payment gateway dashboards
+      description: |
+        Returns the full callback URLs that must be registered in each payment gateway dashboard.
+
+        **Xendit:** Register the `xendit` URL in Xendit Dashboard → Settings → Callbacks → Invoice Paid.
+        The `x-callback-token` header will be verified against `pg_secret_key` (Webhook Verification Token).
+      responses:
+        "200":
+          description: Webhook URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      tripay: { type: string, example: "https://api.example.com/api/v1/webhooks/tripay" }
+                      tripay_voucher: { type: string }
+                      tripay_subscription: { type: string }
+                      midtrans: { type: string }
+                      midtrans_voucher: { type: string }
+                      midtrans_subscription: { type: string }
+                      xendit: { type: string, example: "https://api.example.com/api/v1/webhooks/xendit" }
+                      xendit_voucher: { type: string }
+                      xendit_subscription: { type: string }
 
   # ── Tenants (superadmin) ──
   /tenants:

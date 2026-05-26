@@ -26,6 +26,7 @@ type Tenant struct {
 	PGAPIKey      string     `json:"-"`
 	PGSecretKey   string     `json:"-"`
 	PGMerchantID  string     `json:"pg_merchant_id"`
+	PGSandbox     bool       `json:"pg_sandbox"`
 	IsActive      bool       `json:"is_active"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`

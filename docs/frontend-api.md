@@ -93,19 +93,60 @@ Update tenant profile.
 ### `PUT /tenant/settings`
 Update payment gateway & WhatsApp credentials.
 
+> ⚠️ **BREAKING CHANGE (v1.1):** Field `pg_sandbox` ditambahkan. Field `pg_provider` sekarang mendukung nilai `"xendit"`.
+
 **Body:**
 ```json
 {
-  "pg_provider": "tripay|midtrans",
+  "pg_provider": "tripay|midtrans|xendit",
   "pg_api_key": "...",
   "pg_secret_key": "...",
   "pg_merchant_id": "...",
-  "wa_api_key": "..."
+  "pg_sandbox": true,
+  "wa_api_key": "...",
+  "wa_sender": "628xxx"
 }
 ```
 
+**Panduan per provider:**
+
+| Provider | `pg_api_key` | `pg_secret_key` | `pg_merchant_id` |
+|---|---|---|---|
+| `tripay` | API Key | Private Key | Merchant Code |
+| `midtrans` | Client Key | Server Key | *(tidak dipakai)* |
+| `xendit` | Secret Key (`xnd_...`) | Webhook Verification Token | *(tidak dipakai)* |
+
+**`pg_sandbox`:** `true` = mode testing, `false` = production. Default: `true`.
+
+### `POST /tenant/settings/test`
+Uji koneksi ke payment gateway menggunakan kredensial yang sudah dikonfigurasi.
+Berguna untuk memvalidasi API Key sebelum digunakan di production.
+
+**Body:** *(tidak diperlukan)*
+
+**Response sukses (200):**
+```json
+{ "success": true, "message": "Koneksi payment gateway berhasil" }
+```
+
+**Response gagal (400):**
+```json
+{ "success": false, "error": "Tripay: Invalid API Key" }
+```
+
+**Cara kerja per provider:**
+| Provider | Endpoint yang diuji | Autentikasi |
+|---|---|---|
+| `tripay` | `GET /merchant/profile` | Bearer API Key |
+| `midtrans` | `GET /v2/payment-types` | Basic Auth (Server Key) |
+| `xendit` | `GET /balance` | Basic Auth (Secret Key) |
+
+> 💡 **Tips UX:** Tampilkan tombol "Test Koneksi" di halaman pengaturan payment gateway. Panggil endpoint ini setelah user mengisi kredensial, sebelum menyimpan ke production.
+
 ### `GET /tenant/webhook-urls`
 Get ready-to-use webhook URLs to register in payment gateway dashboards.
+
+> ⚠️ **UPDATE (v1.1):** Response sekarang juga menyertakan URL untuk Xendit.
 
 **Response:**
 ```json
@@ -117,10 +158,20 @@ Get ready-to-use webhook URLs to register in payment gateway dashboards.
     "tripay_subscription": "...",
     "midtrans": "...",
     "midtrans_voucher": "...",
-    "midtrans_subscription": "..."
+    "midtrans_subscription": "...",
+    "xendit": "https://yourdomain.com/api/v1/webhooks/xendit",
+    "xendit_voucher": "...",
+    "xendit_subscription": "..."
   }
 }
 ```
+
+**Cara setup Xendit:**
+1. Login ke [Xendit Dashboard](https://dashboard.xendit.co)
+2. Buka **Settings → Callbacks**
+3. Masukkan URL dari `xendit` di atas ke field **Invoice Paid**
+4. Copy **Webhook Verification Token** dari halaman yang sama
+5. Masukkan token tersebut ke field `pg_secret_key` di `PUT /tenant/settings`
 
 ---
 
@@ -856,14 +907,22 @@ No auth required.
 
 All are public POST endpoints — no auth, signature-verified internally.
 
+> ⚠️ **UPDATE (v1.1):** Ditambahkan 3 endpoint baru untuk Xendit.
+
 | Endpoint | Gateway | Flow |
 |---|---|---|
 | `POST /webhooks/tripay` | Tripay | Invoice payment |
 | `POST /webhooks/midtrans` | Midtrans | Invoice payment |
+| `POST /webhooks/xendit` | **Xendit** *(baru)* | Invoice payment |
 | `POST /webhooks/tripay/voucher` | Tripay | Voucher purchase |
 | `POST /webhooks/midtrans/voucher` | Midtrans | Voucher purchase |
+| `POST /webhooks/xendit/voucher` | **Xendit** *(baru)* | Voucher purchase |
 | `POST /webhooks/subscription/tripay` | Tripay | SaaS subscription |
 | `POST /webhooks/subscription/midtrans` | Midtrans | SaaS subscription |
+| `POST /webhooks/subscription/xendit` | **Xendit** *(baru)* | SaaS subscription |
+
+**Xendit Webhook Verification:**  
+Xendit mengirim header `x-callback-token` di setiap request. Backend memverifikasi token ini dengan `pg_secret_key` yang tersimpan di tenant settings. Tidak perlu tindakan khusus dari frontend.
 
 ---
 

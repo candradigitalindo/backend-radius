@@ -163,7 +163,6 @@ func verifyMSCHAPv2(r *radius.Request, username, storedPassword string) (bool, *
 
 	ntResponse, err := rfc2759.GenerateNTResponse(challenge, peerChallenge, user, pass)
 	if err != nil {
-		log.Printf("RADIUS DEBUG: MS-CHAPv2 GenerateNTResponse error: %v", err)
 		return false, nil
 	}
 
@@ -173,7 +172,6 @@ func verifyMSCHAPv2(r *radius.Request, username, storedPassword string) (bool, *
 
 	authResp, err := rfc2759.GenerateAuthenticatorResponse(challenge, peerChallenge, ntResponse, user, pass)
 	if err != nil {
-		log.Printf("RADIUS DEBUG: MS-CHAPv2 GenerateAuthenticatorResponse error: %v", err)
 		return false, nil
 	}
 
@@ -199,7 +197,6 @@ func verifyMSCHAPv1(r *radius.Request, storedPassword string) bool {
 	// Convert password to UTF-16LE before hashing (same as MS-CHAPv2 internals)
 	ucs2Password, err := rfc2759.ToUTF16([]byte(storedPassword))
 	if err != nil {
-		log.Printf("RADIUS DEBUG: MS-CHAPv1 ToUTF16 error: %v", err)
 		return false
 	}
 	passwordHash := rfc2759.NTPasswordHash(ucs2Password)
@@ -213,7 +210,7 @@ func (s *Server) handleAuth(w radius.ResponseWriter, r *radius.Request) {
 	nasIP := rfc2865.NASIPAddress_Get(r.Packet)
 	method := detectAuthMethod(r)
 
-	log.Printf("RADIUS AUTH REQUEST: user=%s nas=%s method=%d", username, nasIP, method)
+	// AUTH REQUEST log removed — too noisy (called on every PPPoE connect attempt)
 
 	ctx := r.Context()
 
@@ -578,7 +575,7 @@ func (s *Server) handleAcctInterim(ctx context.Context, username, sessionID, nas
 		}
 	}
 
-	log.Printf("RADIUS ACCT INTERIM: session=%s in=%d out=%d time=%ds", sessionID, inputOctets, outputOctets, sessionTime)
+	// INTERIM log removed — too noisy (called every ~60s per active session)
 }
 
 func (s *Server) handleAcctStop(ctx context.Context, username, sessionID, terminateCause string, inputOctets, outputOctets, sessionTime uint32) {

@@ -39,6 +39,37 @@ func NewMidtransClient(serverKey string, sandbox bool) *MidtransClient {
 	}
 }
 
+// TestConnection verifies that the Midtrans server key is valid by calling the payment methods endpoint.
+// Returns nil if the credentials are valid, or an error with a descriptive message.
+func (c *MidtransClient) TestConnection(ctx context.Context) error {
+	// Use Midtrans Core API status endpoint — a lightweight authenticated call
+	statusURL := "https://api.midtrans.com/v2/payment-types"
+	if c.baseURL == midtransSnapURLDev {
+		statusURL = "https://api.sandbox.midtrans.com/v2/payment-types"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
+	if err != nil {
+		return err
+	}
+	// Midtrans uses HTTP Basic Auth: server_key as username, empty password
+	req.SetBasicAuth(c.serverKey, "")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("tidak dapat terhubung ke Midtrans: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("Midtrans: Server Key tidak valid (401 Unauthorized)")
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("Midtrans: server merespons dengan status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // MidtransCreateRequest holds parameters for creating a Midtrans Snap transaction.
 type MidtransCreateRequest struct {
 	OrderID         string

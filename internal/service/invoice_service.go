@@ -780,6 +780,8 @@ func (s *InvoiceService) CreateGatewayPayment(ctx context.Context, input Payment
 	switch tenant.PGProvider {
 	case "midtrans":
 		return s.createMidtransPayment(ctx, tenant, invoice, input)
+	case "xendit":
+		return s.createXenditPayment(ctx, tenant, invoice, input)
 	default: // "tripay" or empty defaults to Tripay
 		return s.createTripayPayment(ctx, tenant, invoice, input)
 	}
@@ -790,7 +792,7 @@ func (s *InvoiceService) createTripayPayment(ctx context.Context, tenant *model.
 		tenant.PGAPIKey,
 		tenant.PGSecretKey,
 		tenant.PGMerchantID,
-		false,
+		tenant.PGSandbox,
 	)
 
 	resp, err := client.CreateTransaction(ctx, payment.CreateTransactionRequest{
@@ -836,7 +838,7 @@ func (s *InvoiceService) createTripayPayment(ctx context.Context, tenant *model.
 }
 
 func (s *InvoiceService) createMidtransPayment(ctx context.Context, tenant *model.Tenant, invoice *model.Invoice, input PaymentGatewayInput) (*PaymentGatewayResult, error) {
-	client := payment.NewMidtransClient(tenant.PGSecretKey, false)
+	client := payment.NewMidtransClient(tenant.PGSecretKey, tenant.PGSandbox)
 
 	itemName := fmt.Sprintf("Invoice %s", invoice.InvoiceNumber)
 	resp, err := client.CreateTransaction(ctx, payment.MidtransCreateRequest{
@@ -882,6 +884,59 @@ func (s *InvoiceService) createMidtransPayment(ctx context.Context, tenant *mode
 	}, nil
 }
 
+func (s *InvoiceService) createXenditPayment(ctx context.Context, tenant *model.Tenant, invoice *model.Invoice, input PaymentGatewayInput) (*PaymentGatewayResult, error) {
+	// For Xendit: PGAPIKey = secret key, PGSecretKey = webhook verification token
+	client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+
+	description := fmt.Sprintf("Invoice %s", invoice.InvoiceNumber)
+	resp, err := client.CreateInvoice(ctx, payment.XenditCreateInvoiceRequest{
+		ExternalID:      invoice.InvoiceNumber,
+		Amount:          invoice.TotalAmount,
+		Description:     description,
+		PayerEmail:      input.CustomerEmail,
+		CustomerName:    input.CustomerName,
+		CustomerPhone:   input.CustomerPhone,
+		SuccessRedirect: input.ReturnURL,
+		FailureRedirect: input.ReturnURL,
+		CallbackURL:     s.baseURL + "/api/v1/webhooks/xendit",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create xendit invoice: %w", err)
+	}
+
+	expiredAt := time.Now().Add(24 * time.Hour)
+	if resp.ExpiryDate != "" {
+		if t, err := time.Parse(time.RFC3339, resp.ExpiryDate); err == nil {
+			expiredAt = t
+		}
+	}
+	rawResp, _ := json.Marshal(resp)
+
+	paymentRecord := &model.Payment{
+		TenantID:        input.TenantID,
+		InvoiceID:       input.InvoiceID,
+		Amount:          invoice.TotalAmount,
+		PaymentMethod:   input.PaymentMethod,
+		Gateway:         "xendit",
+		GatewayTrxID:    invoice.InvoiceNumber, // external_id used as lookup key
+		GatewayStatus:   "PENDING",
+		GatewayResponse: rawResp,
+		Status:          "pending",
+		ExpiredAt:       &expiredAt,
+	}
+
+	if err := s.paymentRepo.Create(ctx, paymentRecord); err != nil {
+		return nil, fmt.Errorf("save xendit payment record: %w", err)
+	}
+
+	return &PaymentGatewayResult{
+		PaymentID:    paymentRecord.ID,
+		GatewayTrxID: invoice.InvoiceNumber,
+		PaymentURL:   resp.InvoiceURL,
+		ExpiredAt:    &expiredAt,
+	}, nil
+}
+
 // ProcessTripayWebhook handles a Tripay callback and marks the invoice paid on success.
 func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, payload payment.TripayCallbackPayload) error {
 	paymentRecord, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.Reference)
@@ -903,7 +958,7 @@ func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, payload payme
 	if tenant == nil || tenant.PGSecretKey == "" {
 		return fmt.Errorf("payment gateway belum dikonfigurasi untuk tenant")
 	}
-	tripayClient := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, false)
+	tripayClient := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
 	if !tripayClient.VerifyWebhookSignature(payload) {
 		return fmt.Errorf("signature webhook Tripay tidak valid")
 	}
@@ -970,7 +1025,7 @@ func (s *InvoiceService) ProcessMidtransWebhook(ctx context.Context, n payment.M
 	if tenant == nil || tenant.PGSecretKey == "" {
 		return fmt.Errorf("payment gateway belum dikonfigurasi untuk tenant")
 	}
-	midtransClient := payment.NewMidtransClient(tenant.PGSecretKey, false)
+	midtransClient := payment.NewMidtransClient(tenant.PGSecretKey, tenant.PGSandbox)
 	if !midtransClient.VerifyWebhookSignature(n) {
 		return fmt.Errorf("signature webhook Midtrans tidak valid")
 	}
@@ -1008,6 +1063,72 @@ func (s *InvoiceService) ProcessMidtransWebhook(ctx context.Context, n payment.M
 			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
 		}
 	} else if payment.IsPaymentFailed(n) {
+		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "failed"); err != nil {
+			return fmt.Errorf("update payment status to failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ProcessXenditWebhook handles a Xendit Invoice callback and marks the invoice paid on success.
+// Xendit sends the Callback Verification Token in the "x-callback-token" header.
+func (s *InvoiceService) ProcessXenditWebhook(ctx context.Context, callbackToken string, payload payment.XenditCallbackPayload) error {
+	// Look up payment by external_id (stored as GatewayTrxID for Xendit)
+	paymentRecord, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.ExternalID)
+	if err != nil {
+		return fmt.Errorf("find payment by external_id: %w", err)
+	}
+	if paymentRecord == nil {
+		return fmt.Errorf("pembayaran tidak ditemukan untuk external_id %s", payload.ExternalID)
+	}
+
+	// Verify callback token using tenant's webhook verification token
+	if s.tenantRepo == nil {
+		return fmt.Errorf("tenant repo tidak dikonfigurasi, tidak dapat memverifikasi token")
+	}
+	tenant, err := s.tenantRepo.FindByID(ctx, paymentRecord.TenantID)
+	if err != nil {
+		return fmt.Errorf("muat tenant untuk verifikasi token: %w", err)
+	}
+	if tenant == nil || tenant.PGSecretKey == "" {
+		return fmt.Errorf("payment gateway belum dikonfigurasi untuk tenant")
+	}
+	xenditClient := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+	if !xenditClient.VerifyWebhookToken(callbackToken) {
+		return fmt.Errorf("token webhook Xendit tidak valid")
+	}
+
+	if payment.IsXenditPaymentSuccess(payload) {
+		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "paid"); err != nil {
+			return fmt.Errorf("update payment status: %w", err)
+		}
+
+		invoice, err := s.invoiceRepo.FindByID(ctx, paymentRecord.TenantID, paymentRecord.InvoiceID)
+		if err != nil {
+			return fmt.Errorf("load invoice: %w", err)
+		}
+		if invoice != nil && invoice.Status != "paid" {
+			method := payload.PaymentMethod
+			if payload.PaymentChannel != "" {
+				method = payload.PaymentChannel
+			}
+			paidAmount := int64(payload.PaidAmount)
+			invoice.PaidAmount = &paidAmount
+			invoice.PaymentMethod = &method
+			if err := s.invoiceRepo.MarkPaid(ctx, invoice); err != nil {
+				return fmt.Errorf("mark invoice paid: %w", err)
+			}
+
+			s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
+
+			if s.rewardSvc != nil {
+				go s.rewardSvc.ProcessRewardOnPayment(context.Background(), paymentRecord.TenantID, invoice.CustomerID)
+			}
+
+			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
+		}
+	} else if payment.IsXenditPaymentFailed(payload) {
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "failed"); err != nil {
 			return fmt.Errorf("update payment status to failed: %w", err)
 		}

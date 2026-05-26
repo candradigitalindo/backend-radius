@@ -68,6 +68,7 @@ type updateSettingsRequest struct {
 	PGAPIKey     string `json:"pg_api_key"`
 	PGSecretKey  string `json:"pg_secret_key"`
 	PGMerchantID string `json:"pg_merchant_id"`
+	PGSandbox    bool   `json:"pg_sandbox"`
 }
 
 func (h *TenantHandler) Create(c *fiber.Ctx) error {
@@ -203,6 +204,7 @@ func (h *TenantHandler) UpdateSettings(c *fiber.Ctx) error {
 		PGAPIKey:     req.PGAPIKey,
 		PGSecretKey:  req.PGSecretKey,
 		PGMerchantID: req.PGMerchantID,
+		PGSandbox:    req.PGSandbox,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrTenantNotFound) {
@@ -212,6 +214,24 @@ func (h *TenantHandler) UpdateSettings(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "Pengaturan berhasil diperbarui"})
+}
+
+// TestPGConnection tests the payment gateway credentials configured for the current tenant.
+// Returns 200 OK with a success message if the connection is valid, or 400/500 with an error message.
+func (h *TenantHandler) TestPGConnection(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	if err := h.tenantService.TestPGConnection(c.Context(), tenantID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "Koneksi payment gateway berhasil",
+	})
 }
 
 // GetWebhookURLs returns the payment gateway callback URLs that the tenant
