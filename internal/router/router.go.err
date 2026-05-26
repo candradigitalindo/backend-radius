@@ -1,0 +1,382 @@
+package router
+
+import (
+	"context"
+	"log"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/candrasyahputra/radius-server/internal/config"
+	"github.com/candrasyahputra/radius-server/internal/handler"
+	"github.com/candrasyahputra/radius-server/internal/middleware"
+	"github.com/candrasyahputra/radius-server/internal/pkg/genieacs"
+	"github.com/candrasyahputra/radius-server/internal/pkg/token"
+	"github.com/candrasyahputra/radius-server/internal/pkg/vpn"
+	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
+	"github.com/candrasyahputra/radius-server/internal/repository"
+	"github.com/candrasyahputra/radius-server/internal/service"
+)
+
+type Dependencies struct {
+	Config *config.Config
+	DB     *pgxpool.Pool
+	Redis  *redis.Client
+}
+
+func Setup(app *fiber.App, deps *Dependencies) {
+	authMiddleware := middleware.NewAuthMiddleware(deps.Config.JWT.PublicKeyPath).WithRedis(deps.Redis)
+
+	// Token manager
+	tokenManager := token.NewManager(deps.Config.JWT)
+
+	// Repositories
+	userRepo := repository.NewUserRepository(deps.DB)
+	customerRepo := repository.NewCustomerRepository(deps.DB)
+	sessionRepo := repository.NewSessionRepository(deps.DB)
+	routerRepo := repository.NewRouterRepository(deps.DB)
+	packageRepo := repository.NewPackageRepository(deps.DB)
+	tenantRepo := repository.NewTenantRepository(deps.DB)
+	invoiceRepo := repository.NewInvoiceRepository(deps.DB)
+	paymentRepo := repository.NewPaymentRepository(deps.DB)
+	ticketRepo := repository.NewTicketRepository(deps.DB)
+	voucherProductRepo := repository.NewVoucherProductRepository(deps.DB)
+	voucherRepo := repository.NewVoucherRepository(deps.DB)
+	voucherPaymentRepo := repository.NewVoucherPaymentRepository(deps.DB)
+	expenseCategoryRepo := repository.NewExpenseCategoryRepository(deps.DB)
+	expenseRepo := repository.NewExpenseRepository(deps.DB)
+	dashboardRepo := repository.NewDashboardRepository(deps.DB)
+	broadcastRepo := repository.NewBroadcastRepository(deps.DB)
+	customerLogRepo := repository.NewCustomerLogRepository(deps.DB)
+	settingRepo := repository.NewSettingRepository(deps.DB)
+	oltRepo := repository.NewOLTRepository(deps.DB)
+	odpRepo := repository.NewODPRepository(deps.DB)
+	ontRepo := repository.NewONTRepository(deps.DB)
+	ftthRepo := repository.NewFTTHRepository(deps.DB)
+	reminderRepo := repository.NewReminderRepository(deps.DB)
+	reportRepo := repository.NewReportRepository(deps.DB)
+	bandwidthRepo := repository.NewBandwidthRepository(deps.DB)
+	notificationRepo := repository.NewNotificationRepository(deps.DB)
+	ipamRepo := repository.NewIPAMRepository(deps.DB)
+	resellerRepo := repository.NewResellerRepository(deps.DB)
+	rewardRepo := repository.NewRewardRepository(deps.DB)
+	subscriptionRepo := repository.NewSubscriptionRepository(deps.DB)
+	roleRepo := repository.NewRoleRepository(deps.DB)
+	auditLogRepo := repository.NewAuditLogRepository(deps.DB)
+	waRepo := repository.NewWhatsAppRepository(deps.DB)
+	waTemplateRepo := repository.NewWABroadcastTemplateRepository(deps.DB)
+
+	// VPN Manager
+	vpnMgr := vpn.NewManager(
+		deps.Config.VPN.Interface,
+		deps.Config.VPN.Subnet,
+		deps.Config.VPN.ServerIP,
+		deps.Config.VPN.ListenPort,
+		deps.Config.VPN.PublicIP,
+	)
+
+	// Restore WireGuard peers from database
+	if vpnMgr.IsAvailable() {
+		dbPeers, err := routerRepo.ListVPNPeers(context.Background())
+		if err != nil {
+			log.Printf("[VPN] Failed to load peers from DB: %v", err)
+		} else if len(dbPeers) > 0 {
+			restorePeers := make([]struct{ PublicKey, VPNIP string }, len(dbPeers))
+			for i, p := range dbPeers {
+				restorePeers[i] = struct{ PublicKey, VPNIP string }{p.PublicKey, p.VPNIP}
+			}
+			vpnMgr.RestorePeers(restorePeers)
+		}
+	}
+
+	// WhatsApp client
+	waClient := whatsapp.NewClient(deps.Config.WhatsApp)
+
+	// Services
+	authService := service.NewAuthService(userRepo, customerRepo, tenantRepo, roleRepo, tokenManager)
+	userService := service.NewUserService(userRepo, roleRepo)
+	roleService := service.NewRoleService(roleRepo, userRepo)
+	customerService := service.NewCustomerService(customerRepo, sessionRepo)
+	routerService := service.NewRouterService(routerRepo, sessionRepo, vpnMgr).
+		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret)
+	packageService := service.NewPackageService(packageRepo)
+	tenantService := service.NewTenantService(tenantRepo)
+	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL)
+	ticketService := service.NewTicketService(ticketRepo)
+	voucherService := service.NewVoucherService(voucherProductRepo, voucherRepo, voucherPaymentRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL)
+	expenseService := service.NewExpenseService(expenseCategoryRepo, expenseRepo)
+	dashboardService := service.NewDashboardService(dashboardRepo)
+	broadcastService := service.NewBroadcastService(broadcastRepo, customerRepo, waClient)
+	broadcastService.StartScheduler()
+	customerLogService := service.NewCustomerLogService(customerLogRepo)
+	settingService := service.NewSettingService(settingRepo)
+	oltService := service.NewOLTService(oltRepo).WithVPNManager(vpnMgr)
+	snmpService := service.NewSNMPService(oltRepo, vpnMgr)
+	odpService := service.NewODPService(odpRepo, customerRepo, ontRepo)
+	ontService := service.NewONTService(ontRepo)
+	ftthService := service.NewFTTHService(ftthRepo)
+	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient)
+	reportService := service.NewReportService(reportRepo)
+	exportService := service.NewExportService(reportRepo)
+	bandwidthService := service.NewBandwidthService(bandwidthRepo)
+	notificationService := service.NewNotificationService(notificationRepo, customerRepo, deps.Config.FCM.ServerKey, deps.Config.FCM.Enabled).WithWAClient(waClient)
+	ipamService := service.NewIPAMService(ipamRepo)
+	resellerService := service.NewResellerService(resellerRepo)
+	rewardService := service.NewRewardService(rewardRepo)
+	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&deps.Config.PG, deps.Config.App.URL)
+
+	// GenieACS TR-069 client & service
+	genieacsClient := genieacs.NewClient(deps.Config.GenieACS)
+	genieacsService := service.NewGenieACSService(genieacsClient, ontRepo, customerRepo)
+
+	// Link GenieACS to customer service for FTTH auto-provisioning
+	customerService.WithGenieACS(ontRepo, genieacsService)
+	customerService.WithCWMPPort(deps.Config.App.CWMPPort)
+
+	// Handlers
+	authHandler := handler.NewAuthHandler(authService)
+	authHandler.WithResetDeps(userRepo, tenantRepo, deps.Redis, waClient)
+	userHandler := handler.NewUserHandler(userService)
+	roleHandler := handler.NewRoleHandler(roleService)
+	customerHandler := handler.NewCustomerHandler(customerService)
+	routerHandler := handler.NewRouterHandler(routerService)
+	packageHandler := handler.NewPackageHandler(packageService)
+	tenantHandler := handler.NewTenantHandler(tenantService)
+	invoiceHandler := handler.NewInvoiceHandler(invoiceService)
+	ticketHandler := handler.NewTicketHandler(ticketService)
+	voucherHandler := handler.NewVoucherHandler(voucherService)
+	expenseHandler := handler.NewExpenseHandler(expenseService)
+	dashboardHandler := handler.NewDashboardHandler(dashboardService)
+	broadcastHandler := handler.NewBroadcastHandler(broadcastService)
+	customerLogHandler := handler.NewCustomerLogHandler(customerLogService)
+	settingHandler := handler.NewSettingHandler(settingService)
+	oltHandler := handler.NewOLTHandler(oltService)
+	odpHandler := handler.NewODPHandler(odpService)
+	ontHandler := handler.NewONTHandler(ontService)
+	ftthHandler := handler.NewFTTHHandler(ftthService)
+	reminderHandler := handler.NewReminderHandler(reminderService)
+	reportHandler := handler.NewReportHandler(reportService)
+	exportHandler := handler.NewExportHandler(exportService)
+	bandwidthHandler := handler.NewBandwidthHandler(bandwidthService)
+	notificationHandler := handler.NewNotificationHandler(notificationService)
+	ipamHandler := handler.NewIPAMHandler(ipamService)
+	resellerHandler := handler.NewResellerHandler(resellerService)
+	rewardHandler := handler.NewRewardHandler(rewardService)
+	webhookHandler := handler.NewWebhookHandler(invoiceService, voucherService, subscriptionService)
+	publicPaymentHandler := handler.NewPublicPaymentHandler(invoiceService, tenantService)
+	isolirPageHandler := handler.NewIsolirPageHandler(tenantService, customerService)
+	mobileHandler := handler.NewMobileHandler(customerService, invoiceService, packageService, ticketService, authService)
+	themeHandler := handler.NewThemeHandler(tenantService, userService)
+	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionService)
+	snmpHandler := handler.NewSNMPHandler(snmpService)
+	waHandler := handler.NewWhatsAppHandler(waClient, waRepo).WithBaseURL(deps.Config.App.URL)
+	waTemplateHandler := handler.NewWABroadcastTemplateHandler(waTemplateRepo)
+	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo)
+	wsHandler := handler.NewWSHandler(deps.Redis)
+	i18nHandler := handler.NewI18nHandler()
+
+	// API V1 Group
+	v1 := app.Group("/api/v1")
+
+	// Public static files (for temporary WhatsApp uploads)
+	app.Static("/temp", "./storage/temp")
+
+	// Limiter for public endpoints
+	publicLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+	})
+
+	// Auth routes (public)
+	auth := v1.Group("/auth")
+	auth.Post("/register", publicLimiter, authHandler.Register)
+	auth.Post("/login", publicLimiter, authHandler.Login)
+	auth.Post("/refresh", publicLimiter, authHandler.RefreshToken)
+	auth.Post("/reset-pin", publicLimiter, authHandler.RequestResetPIN)
+	auth.Post("/reset-password", publicLimiter, authHandler.ResetPasswordWithPIN)
+
+	// Router heartbeat (public - called by MikroTik)
+	v1.Post("/routers/heartbeat", publicLimiter, routerHandler.Heartbeat)
+
+	// CWMP TR-069 proxy (public - called by ONT devices)
+	cwmpHandler := handler.NewCWMPHandler(genieacsClient, tenantRepo, customerRepo, "http://127.0.0.1:17547")
+	app.All("/", cwmpHandler.Handle)
+
+	// Payment gateway webhooks
+	webhooks := v1.Group("/webhooks")
+	webhooks.Post("/tripay", publicLimiter, webhookHandler.TripayCallback)
+	webhooks.Post("/midtrans", publicLimiter, webhookHandler.MidtransCallback)
+	webhooks.Post("/tripay/voucher", publicLimiter, webhookHandler.TripayVoucherCallback)
+	webhooks.Post("/midtrans/voucher", publicLimiter, webhookHandler.MidtransVoucherCallback)
+	webhooks.Post("/subscription/tripay", publicLimiter, webhookHandler.TripaySubscriptionCallback)
+	webhooks.Post("/subscription/midtrans", publicLimiter, webhookHandler.MidtransSubscriptionCallback)
+
+	// Public payment page
+	publicPay := v1.Group("/public/pay")
+	publicPay.Get("/:tenant_id/:customer_code", publicLimiter, publicPaymentHandler.GetCustomerInfo)
+	publicPay.Post("/:tenant_id/:customer_code", publicLimiter, publicPaymentHandler.CreatePayment)
+	publicPay.Get("/check/:trx_id", publicLimiter, publicPaymentHandler.CheckPaymentStatus)
+
+	// Public isolir page
+	app.Get("/isolir/:tenant_slug/:customer_code", isolirPageHandler.GetPage)
+
+	// Public portal login
+	portalHandler := handler.NewPortalHandler(customerRepo, invoiceRepo, ticketRepo, paymentRepo, tenantRepo, tokenManager)
+	portalHandler.WithResetDeps(deps.Redis, waClient)
+	publicPortal := v1.Group("/public/portal")
+	publicPortal.Get("/:slug", publicLimiter, portalHandler.GetTenantInfo)
+	publicPortal.Post("/:slug/login", publicLimiter, portalHandler.PortalLogin)
+	publicPortal.Post("/:slug/reset-pin", publicLimiter, portalHandler.RequestResetPIN)
+	publicPortal.Post("/:slug/reset-password", publicLimiter, portalHandler.ResetPasswordWithPIN)
+
+	// Public voucher store
+	publicStore := v1.Group("/public/store")
+	publicStore.Get("/:tenant_slug", publicLimiter, publicVoucherHandler.GetStoreProducts)
+	publicStore.Post("/:tenant_slug/buy", publicLimiter, publicVoucherHandler.PurchaseVoucher)
+
+	// Mobile App API — public auth
+	v1.Post("/mobile/auth/login", publicLimiter, mobileHandler.Login)
+
+	// Language middleware
+	v1.Use(middleware.LangMiddleware())
+
+	// i18n routes (public)
+	v1.Get("/languages", i18nHandler.GetLanguages)
+	v1.Get("/translations", i18nHandler.GetTranslations)
+
+	// Auth routes (protected)
+	auth.Use(authMiddleware.Handle())
+	auth.Get("/me", authHandler.Me)
+	auth.Post("/logout", authHandler.Logout)
+
+	// Portal routes (customer web portal)
+	portal := v1.Group("/portal", authMiddleware.Handle(), middleware.TenantGuard())
+	portal.Get("/profile", portalHandler.GetProfile)
+	portal.Get("/customer", portalHandler.GetCustomer)
+	portal.Get("/invoices", portalHandler.ListInvoices)
+	portal.Get("/invoices/:id", portalHandler.GetInvoice)
+	portal.Get("/invoices/:id/payments", portalHandler.GetInvoicePayments)
+	portal.Get("/tickets", portalHandler.ListTickets)
+	portal.Post("/tickets", portalHandler.CreateTicket)
+	portal.Get("/tickets/:id", portalHandler.GetTicket)
+	portal.Get("/tickets/:id/messages", portalHandler.GetTicketMessages)
+	portal.Post("/tickets/:id/messages", portalHandler.ReplyTicket)
+	portal.Put("/change-password", portalHandler.ChangePassword)
+
+	// Protected routes (staff only)
+	protected := v1.Group("/", authMiddleware.Handle(), middleware.TenantGuard(), middleware.StaffGuard(), middleware.NewPermissionLoader(roleRepo))
+
+	// Customer routes
+	customers := protected.Group("/customers", middleware.PermissionGuard("customers.view"))
+	customers.Get("/next-code", customerHandler.NextCode)
+	customers.Get("/", customerHandler.List)
+	customers.Post("/", middleware.PermissionGuard("customers.create"), customerHandler.Create)
+	customers.Get("/:id", customerHandler.GetByID)
+	customers.Put("/:id", middleware.PermissionGuard("customers.edit"), customerHandler.Update)
+	customers.Delete("/:id", middleware.PermissionGuard("customers.delete"), customerHandler.Delete)
+	customers.Post("/:id/isolate", middleware.PermissionGuard("customers.isolate"), customerHandler.Isolate)
+	customers.Post("/:id/activate", middleware.PermissionGuard("customers.isolate"), customerHandler.Activate)
+
+	// Router routes
+	routers := protected.Group("/routers", middleware.PermissionGuard("routers.view"))
+	routers.Get("/", routerHandler.List)
+	routers.Post("/", middleware.PermissionGuard("routers.create"), routerHandler.Create)
+	routers.Get("/:id", routerHandler.GetByID)
+	routers.Put("/:id", middleware.PermissionGuard("routers.edit"), routerHandler.Update)
+	routers.Delete("/:id", middleware.PermissionGuard("routers.delete"), routerHandler.Delete)
+	routers.Post("/:id/regenerate-token", middleware.PermissionGuard("routers.edit"), routerHandler.RegenerateToken)
+	routers.Get("/:id/sessions", routerHandler.ListSessions)
+	routers.Get("/:id/traffic", routerHandler.GetTraffic)
+	routers.Post("/:id/test", middleware.PermissionGuard("routers.edit"), routerHandler.TestConnection)
+	routers.Post("/:id/sync", middleware.PermissionGuard("routers.edit"), routerHandler.SyncSessions)
+	routers.Post("/:id/vpn-key", middleware.PermissionGuard("routers.edit"), routerHandler.RegisterVPNKey)
+	routers.Get("/:id/mikrotik-config", routerHandler.GetMikroTikConfig)
+	routers.Get("/:id/connection-logs", routerHandler.ListConnectionLogs)
+	routers.Get("/vpn/peers", routerHandler.ListVPNPeers)
+
+	// Package routes
+	packages := protected.Group("/packages", middleware.PermissionGuard("packages.view"))
+	packages.Get("/", packageHandler.List)
+	packages.Post("/", middleware.PermissionGuard("packages.create"), packageHandler.Create)
+	packages.Get("/:id", packageHandler.GetByID)
+	packages.Put("/:id", middleware.PermissionGuard("packages.edit"), packageHandler.Update)
+	packages.Delete("/:id", middleware.PermissionGuard("packages.delete"), packageHandler.Delete)
+
+	// Invoice routes
+	invoices := protected.Group("/invoices", middleware.PermissionGuard("invoices.view"))
+	invoices.Get("/", invoiceHandler.List)
+	invoices.Post("/", middleware.PermissionGuard("invoices.create"), invoiceHandler.Create)
+	invoices.Post("/generate", middleware.PermissionGuard("invoices.create"), invoiceHandler.Generate)
+	invoices.Get("/:id", invoiceHandler.GetByID)
+	invoices.Put("/:id", middleware.PermissionGuard("invoices.edit"), invoiceHandler.Update)
+	invoices.Delete("/:id", middleware.PermissionGuard("invoices.delete"), invoiceHandler.Delete)
+	invoices.Post("/:id/pay", middleware.PermissionGuard("invoices.pay"), invoiceHandler.RecordPayment)
+	invoices.Post("/:id/pay-gateway", middleware.PermissionGuard("invoices.pay"), invoiceHandler.CreateGatewayPayment)
+	invoices.Get("/:id/payments", invoiceHandler.GetPayments)
+
+	// Payment routes
+	protected.Get("/payments", invoiceHandler.ListPayments)
+
+	// Ticket routes
+	tickets := protected.Group("/tickets", middleware.PermissionGuard("tickets.view"))
+	tickets.Get("/", ticketHandler.List)
+	tickets.Post("/", middleware.PermissionGuard("tickets.create"), ticketHandler.Create)
+	tickets.Get("/:id", ticketHandler.GetByID)
+	tickets.Put("/:id", middleware.PermissionGuard("tickets.edit"), ticketHandler.Update)
+	tickets.Delete("/:id", middleware.PermissionGuard("tickets.delete"), ticketHandler.Delete)
+	tickets.Put("/:id/status", middleware.PermissionGuard("tickets.edit"), ticketHandler.UpdateStatus)
+	tickets.Put("/:id/assign", middleware.PermissionGuard("tickets.assign"), ticketHandler.Assign)
+	tickets.Get("/:id/messages", ticketHandler.GetMessages)
+	tickets.Post("/:id/messages", middleware.PermissionGuard("tickets.edit"), ticketHandler.AddMessage)
+
+	// Voucher routes
+	voucherProducts := protected.Group("/voucher-products", middleware.PermissionGuard("vouchers.view"))
+	voucherProducts.Get("/", voucherHandler.ListProducts)
+	voucherProducts.Post("/", middleware.PermissionGuard("vouchers.create"), voucherHandler.CreateProduct)
+	voucherProducts.Get("/:id", voucherHandler.GetProduct)
+	voucherProducts.Put("/:id", middleware.PermissionGuard("vouchers.create"), voucherHandler.UpdateProduct)
+	voucherProducts.Delete("/:id", middleware.PermissionGuard("vouchers.delete"), voucherHandler.DeleteProduct)
+
+	vouchers := protected.Group("/vouchers", middleware.PermissionGuard("vouchers.view"))
+	vouchers.Get("/", voucherHandler.ListVouchers)
+	vouchers.Post("/generate", middleware.PermissionGuard("vouchers.create"), voucherHandler.Generate)
+	vouchers.Get("/:id", voucherHandler.GetVoucher)
+	vouchers.Delete("/:id", middleware.PermissionGuard("vouchers.delete"), voucherHandler.DeleteVoucher)
+
+	// WhatsApp routes
+	wa := protected.Group("/whatsapp", middleware.PermissionGuard("whatsapp.view"))
+	wa.Get("/config", waHandler.GetConfig)
+	wa.Put("/config", middleware.PermissionGuard("whatsapp.configure"), waHandler.UpdateConfig)
+	wa.Get("/logs", waHandler.GetLogs)
+	wa.Post("/sessions/start", middleware.PermissionGuard("whatsapp.configure"), waHandler.StartSession)
+	wa.Get("/sessions/status", waHandler.GetStatus)
+	wa.Get("/sessions/qr", waHandler.GetQR)
+	wa.Delete("/sessions", middleware.PermissionGuard("whatsapp.configure"), waHandler.StopSession)
+	wa.Post("/send", middleware.PermissionGuard("whatsapp.send"), waHandler.SendMessage)
+
+	// WhatsApp broadcast templates
+	waTemplates := wa.Group("/templates")
+	waTemplates.Get("/", waTemplateHandler.List)
+	waTemplates.Get("/:id", waTemplateHandler.GetByID)
+	waTemplates.Post("/", waTemplateHandler.Create)
+	waTemplates.Put("/:id", waTemplateHandler.Update)
+	waTemplates.Delete("/:id", waTemplateHandler.Delete)
+
+	// Audit logs
+	auditLogs := protected.Group("/audit-logs", middleware.RoleGuard("superadmin"))
+	auditLogs.Get("/", auditLogHandler.List)
+
+	// Dashboard
+	dashboard := protected.Group("/dashboard", middleware.PermissionGuard("dashboard.view"))
+	dashboard.Get("/stats", dashboardHandler.GetStats)
+
+	// WebSocket
+	app.Use("/ws", wsHandler.UpgradeCheck)
+	app.Get("/ws", wsHandler.Handle())
+}

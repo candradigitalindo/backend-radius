@@ -1,0 +1,432 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/candrasyahputra/radius-server/internal/model"
+	"github.com/candrasyahputra/radius-server/internal/pkg/id"
+	"github.com/candrasyahputra/radius-server/internal/pkg/token"
+	"github.com/candrasyahputra/radius-server/internal/repository"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("Email atau password salah")
+	ErrEmailAlreadyExists = errors.New("Email sudah terdaftar")
+	ErrAccountInactive    = errors.New("Akun tidak aktif")
+	ErrInvalidToken       = errors.New("Token tidak valid atau kedaluwarsa")
+	ErrUserNotFound       = errors.New("Pengguna tidak ditemukan")
+	ErrMultipleTenants    = errors.New("Ditemukan beberapa tenant, silakan tentukan tenant_id")
+)
+
+type AuthService struct {
+	userRepo     repository.UserRepository
+	customerRepo repository.CustomerRepository
+	tenantRepo   repository.TenantRepository
+	roleRepo     repository.RoleRepository
+	tokenManager *token.Manager
+}
+
+func NewAuthService(userRepo repository.UserRepository, customerRepo repository.CustomerRepository, tenantRepo repository.TenantRepository, roleRepo repository.RoleRepository, tokenManager *token.Manager) *AuthService {
+	return &AuthService{
+		userRepo:     userRepo,
+		customerRepo: customerRepo,
+		tenantRepo:   tenantRepo,
+		roleRepo:     roleRepo,
+		tokenManager: tokenManager,
+	}
+}
+
+type RegisterInput struct {
+	TenantID string
+	Name     string
+	Email    string
+	Password string
+	Phone    string
+}
+
+type LoginInput struct {
+	TenantID string
+	Email    string
+	Password string
+}
+
+type AuthResponse struct {
+	User      UserResponse     `json:"user"`
+	TokenPair *token.TokenPair `json:"token"`
+}
+
+type UserResponse struct {
+	ID            string     `json:"id"`
+	TenantID      string     `json:"tenant_id"`
+	Name          string     `json:"name"`
+	Email         string     `json:"email"`
+	Role          string     `json:"role"`
+	Phone         string     `json:"phone"`
+	Plan          string     `json:"plan,omitempty"`
+	PlanExpiresAt *time.Time `json:"plan_expires_at,omitempty"`
+	Permissions   []string   `json:"permissions"`
+}
+
+func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthResponse, error) {
+	// Public registration only creates new tenants — cannot join existing tenant
+	if input.TenantID != "" {
+		return nil, errors.New("registrasi hanya untuk membuat tenant baru")
+	}
+
+	existing, err := s.userRepo.FindByEmail(ctx, input.TenantID, input.Email)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, ErrEmailAlreadyExists
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	user := &model.User{
+		TenantID:     input.TenantID,
+		Name:         input.Name,
+		Email:        input.Email,
+		PasswordHash: string(hash),
+		Role:         "admin",
+		Phone:        input.Phone,
+		IsActive:     true,
+	}
+
+	if user.TenantID == "" {
+		tenant := &model.Tenant{
+			Name:         input.Name,
+			Slug:         id.New(),
+			Email:        input.Email,
+			Timezone:     "Asia/Jakarta",
+			Currency:     "IDR",
+			BillingCycle: 1,
+			DueDay:       20,
+			IsolirDay:    7,
+			GracePeriod:  3,
+			Plan:         "free",
+			MaxCustomers: 50,
+			IsActive:     true,
+		}
+		if err := s.tenantRepo.Create(ctx, tenant); err != nil {
+			return nil, err
+		}
+		user.TenantID = tenant.ID
+		user.Role = "owner"
+
+		// Seed default roles for new tenant
+		_ = s.seedDefaultRoles(ctx, tenant.ID)
+	}
+
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		return nil, err
+	}
+
+	pair, err := s.tokenManager.GeneratePair(token.Claims{
+		UserID:   user.ID,
+		TenantID: user.TenantID,
+		Role:     user.Role,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &AuthResponse{
+		User:      s.toUserResponseWithPerms(ctx, user),
+		TokenPair: pair,
+	}, nil
+}
+
+func (s *AuthService) Login(ctx context.Context, input LoginInput) (*AuthResponse, error) {
+	var user *model.User
+
+	if input.TenantID != "" {
+		u, err := s.userRepo.FindByEmail(ctx, input.TenantID, input.Email)
+		if err != nil {
+			return nil, err
+		}
+		user = u
+	} else {
+		users, err := s.userRepo.FindByEmailOnly(ctx, input.Email)
+		if err != nil {
+			return nil, err
+		}
+		if len(users) == 0 {
+			return nil, ErrInvalidCredentials
+		}
+		if len(users) > 1 {
+			return nil, ErrMultipleTenants
+		}
+		user = users[0]
+	}
+
+	if user == nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	if !user.IsActive {
+		return nil, ErrAccountInactive
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	_ = s.userRepo.UpdateLastLogin(ctx, user.ID)
+
+	pair, err := s.tokenManager.GeneratePair(token.Claims{
+		UserID:   user.ID,
+		TenantID: user.TenantID,
+		Role:     user.Role,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := s.toUserResponseWithPerms(ctx, user)
+	if user.TenantID != "" {
+		tenant, err := s.tenantRepo.FindByID(ctx, user.TenantID)
+		if err == nil && tenant != nil {
+			resp.Plan = tenant.Plan
+			resp.PlanExpiresAt = tenant.PlanExpiresAt
+		}
+	}
+
+	return &AuthResponse{
+		User:      resp,
+		TokenPair: pair,
+	}, nil
+}
+
+func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*token.TokenPair, error) {
+	claims, err := s.tokenManager.ValidateRefreshToken(refreshToken)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	// Portal customer tokens use the customers table
+	if claims.Role == "customer" {
+		customer, err := s.customerRepo.FindByID(ctx, claims.TenantID, claims.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if customer == nil || customer.Status != "active" {
+			return nil, ErrInvalidToken
+		}
+		return s.tokenManager.GeneratePair(token.Claims{
+			UserID:   customer.ID,
+			TenantID: customer.TenantID,
+			Role:     "customer",
+		})
+	}
+
+	user, err := s.userRepo.FindByID(ctx, claims.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || !user.IsActive {
+		return nil, ErrInvalidToken
+	}
+
+	return s.tokenManager.GeneratePair(token.Claims{
+		UserID:   user.ID,
+		TenantID: user.TenantID,
+		Role:     user.Role,
+	})
+}
+
+func (s *AuthService) GetCurrentUser(ctx context.Context, userID, role, tenantID string) (*UserResponse, error) {
+	// Portal customer: look up in customers table
+	if role == "customer" {
+		customer, err := s.customerRepo.FindByID(ctx, tenantID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if customer == nil {
+			return nil, ErrUserNotFound
+		}
+		resp := UserResponse{
+			ID:       customer.ID,
+			TenantID: customer.TenantID,
+			Name:     customer.Name,
+			Email:    customer.Email,
+			Role:     "customer",
+			Phone:    customer.Phone,
+		}
+		return &resp, nil
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+
+	resp := s.toUserResponseWithPerms(ctx, user)
+
+	// Attach tenant plan info for staff roles
+	if user.TenantID != "" {
+		tenant, err := s.tenantRepo.FindByID(ctx, user.TenantID)
+		if err == nil && tenant != nil {
+			resp.Plan = tenant.Plan
+			resp.PlanExpiresAt = tenant.PlanExpiresAt
+		}
+	}
+
+	return &resp, nil
+}
+
+func toUserResponse(u *model.User) UserResponse {
+	return UserResponse{
+		ID:       u.ID,
+		TenantID: u.TenantID,
+		Name:     u.Name,
+		Email:    u.Email,
+		Role:     u.Role,
+		Phone:    u.Phone,
+	}
+}
+
+func (s *AuthService) toUserResponseWithPerms(ctx context.Context, u *model.User) UserResponse {
+	resp := toUserResponse(u)
+	resp.Permissions = s.getPermissionsForRole(ctx, u.TenantID, u.Role)
+	return resp
+}
+
+func (s *AuthService) getPermissionsForRole(ctx context.Context, tenantID, roleSlug string) []string {
+	if roleSlug == "superadmin" {
+		return model.AllPermissionKeys()
+	}
+	if roleSlug == "owner" {
+		return model.AllPermissionKeys()
+	}
+
+	_ = s.ensureDefaultRoles(ctx, tenantID)
+
+	role, err := s.roleRepo.FindBySlug(ctx, tenantID, roleSlug)
+	if err != nil || role == nil {
+		return []string{}
+	}
+	return role.Permissions
+}
+
+func (s *AuthService) ensureDefaultRoles(ctx context.Context, tenantID string) error {
+	count, err := s.roleRepo.CountByTenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	return s.seedDefaultRoles(ctx, tenantID)
+}
+
+func (s *AuthService) seedDefaultRoles(ctx context.Context, tenantID string) error {
+	defaults := []model.Role{
+		{TenantID: tenantID, Name: "Owner", Slug: "owner", Description: "Pemilik tenant dengan akses penuh", IsSystem: true, Permissions: model.AllPermissionKeys()},
+		{TenantID: tenantID, Name: "Admin", Slug: "admin", Description: "Administrator dengan akses luas", IsSystem: true, Permissions: model.DefaultAdminPermissions()},
+		{TenantID: tenantID, Name: "Teknisi", Slug: "technician", Description: "Teknisi lapangan", IsSystem: true, Permissions: model.DefaultTechnicianPermissions()},
+	}
+	for i := range defaults {
+		// Uses ON CONFLICT DO NOTHING — safe for concurrent calls
+		if err := s.roleRepo.Create(ctx, &defaults[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ChangePassword verifies the current password and updates to the new one.
+func (s *AuthService) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return ErrUserNotFound
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+		return errors.New("Password saat ini salah")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	user.PasswordHash = string(hash)
+	return s.userRepo.Update(ctx, user)
+}
+
+// UpdateProfileInput berisi field yang boleh diubah oleh user sendiri.
+type UpdateProfileInput struct {
+	Name  string
+	Phone string
+	Email string
+}
+
+// UpdateProfile memperbarui profil user yang sedang login (name, phone, email).
+// Email divalidasi unik dalam tenant yang sama.
+func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input UpdateProfileInput) (*UserResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+
+	// Validasi email unik jika berubah
+	if input.Email != "" && input.Email != user.Email {
+		existing, err := s.userRepo.FindByEmail(ctx, user.TenantID, input.Email)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil && existing.ID != userID {
+			return nil, ErrEmailAlreadyExists
+		}
+		user.Email = input.Email
+	}
+
+	if input.Name != "" {
+		user.Name = input.Name
+	}
+	user.Phone = input.Phone
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, err
+	}
+
+	resp := s.toUserResponseWithPerms(ctx, user)
+	return &resp, nil
+}
+
+// ResetPasswordDirect resets a user's password without requiring the current password.
+// Used for PIN-verified password resets from the customer portal.
+func (s *AuthService) ResetPasswordDirect(ctx context.Context, tenantID, email, newPassword string) error {
+	user, err := s.userRepo.FindByEmail(ctx, tenantID, email)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return ErrUserNotFound
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	user.PasswordHash = string(hash)
+	return s.userRepo.Update(ctx, user)
+}

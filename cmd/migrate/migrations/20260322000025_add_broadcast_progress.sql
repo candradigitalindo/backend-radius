@@ -1,0 +1,13 @@
+-- migrate:up
+
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'completed';
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS total_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS pending_phones TEXT NOT NULL DEFAULT '';
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- migrate:down
+
+ALTER TABLE broadcasts DROP COLUMN IF EXISTS status;
+ALTER TABLE broadcasts DROP COLUMN IF EXISTS total_pending;
+ALTER TABLE broadcasts DROP COLUMN IF EXISTS pending_phones;
+ALTER TABLE broadcasts DROP COLUMN IF EXISTS updated_at;

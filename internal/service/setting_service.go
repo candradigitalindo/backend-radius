@@ -1,0 +1,111 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/candrasyahputra/radius-server/internal/model"
+	"github.com/candrasyahputra/radius-server/internal/repository"
+)
+
+var (
+	ErrSettingNotFound   = errors.New("Pengaturan tidak ditemukan")
+	ErrSettingKeyInvalid = errors.New("Key pengaturan tidak diizinkan")
+	ErrSettingValueLimit = errors.New("Nilai pengaturan terlalu panjang")
+)
+
+// allowedSettingKeys whitelist of valid setting keys.
+var allowedSettingKeys = map[string]bool{
+	"billing_auto_generate_invoice": true,
+	"billing_auto_isolate":          true,
+	"isolir_page_title":             true,
+	"isolir_page_message":           true,
+	"isolir_page_bg_color":          true,
+	"isolir_page_text_color":        true,
+	"isolir_page_logo":              true,
+	"isolir_page_contact_phone":     true,
+	"isolir_page_contact_wa":        true,
+	"isolir_page_payment_url":       true,
+	"isolir_page_dark_mode":         true,
+	"isolir_page_custom_css":        true,
+	"app_theme":                     true,
+	"app_language":                  true,
+}
+
+const maxSettingValueLen = 10000
+
+type SettingService struct {
+	settingRepo repository.SettingRepository
+}
+
+func NewSettingService(settingRepo repository.SettingRepository) *SettingService {
+	return &SettingService{settingRepo: settingRepo}
+}
+
+func (s *SettingService) Set(ctx context.Context, tenantID, key, value string) error {
+	key = strings.TrimSpace(key)
+	if !allowedSettingKeys[key] {
+		return ErrSettingKeyInvalid
+	}
+	if len(value) > maxSettingValueLen {
+		return ErrSettingValueLimit
+	}
+	setting := &model.Setting{
+		TenantID: tenantID,
+		Key:      key,
+		Value:    value,
+	}
+	return s.settingRepo.Upsert(ctx, setting)
+}
+
+func (s *SettingService) Get(ctx context.Context, tenantID, key string) (*model.Setting, error) {
+	setting, err := s.settingRepo.FindByKey(ctx, tenantID, key)
+	if err != nil {
+		return nil, err
+	}
+	if setting == nil {
+		return nil, ErrSettingNotFound
+	}
+	return setting, nil
+}
+
+func (s *SettingService) Delete(ctx context.Context, tenantID, key string) error {
+	setting, err := s.settingRepo.FindByKey(ctx, tenantID, key)
+	if err != nil {
+		return err
+	}
+	if setting == nil {
+		return ErrSettingNotFound
+	}
+	return s.settingRepo.Delete(ctx, tenantID, key)
+}
+
+func (s *SettingService) List(ctx context.Context, tenantID string) ([]model.Setting, error) {
+	return s.settingRepo.List(ctx, tenantID)
+}
+
+func (s *SettingService) BulkSet(ctx context.Context, tenantID string, settings map[string]string) error {
+	for k, v := range settings {
+		if !allowedSettingKeys[strings.TrimSpace(k)] {
+			return ErrSettingKeyInvalid
+		}
+		if len(v) > maxSettingValueLen {
+			return ErrSettingValueLimit
+		}
+	}
+	return s.settingRepo.BulkUpsert(ctx, tenantID, settings)
+}
+
+func (s *SettingService) GetAsMap(ctx context.Context, tenantID string) (map[string]string, error) {
+	settings, err := s.settingRepo.List(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]string, len(settings))
+	for _, s := range settings {
+		result[s.Key] = s.Value
+	}
+	return result, nil
+}

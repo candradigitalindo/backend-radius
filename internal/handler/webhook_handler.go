@@ -1,0 +1,155 @@
+package handler
+
+import (
+	"log"
+
+	"github.com/gofiber/fiber/v2"
+
+	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
+	"github.com/candrasyahputra/radius-server/internal/service"
+)
+
+// WebhookHandler handles payment gateway webhook callbacks.
+type WebhookHandler struct {
+	invoiceService      *service.InvoiceService
+	voucherService      *service.VoucherService
+	subscriptionService *service.SubscriptionService
+}
+
+// NewWebhookHandler creates a new WebhookHandler.
+func NewWebhookHandler(invoiceService *service.InvoiceService) *WebhookHandler {
+	return &WebhookHandler{invoiceService: invoiceService}
+}
+
+func (h *WebhookHandler) WithVoucherService(voucherService *service.VoucherService) *WebhookHandler {
+	h.voucherService = voucherService
+	return h
+}
+
+func (h *WebhookHandler) WithSubscriptionService(subscriptionService *service.SubscriptionService) *WebhookHandler {
+	h.subscriptionService = subscriptionService
+	return h
+}
+
+// TripayCallback handles Tripay payment gateway webhook notifications.
+// This endpoint is public (no JWT auth) but validated via HMAC signature inside the service.
+func (h *WebhookHandler) TripayCallback(c *fiber.Ctx) error {
+	var payload payment.TripayCallbackPayload
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	log.Printf("[webhook] tripay reference=%s status=%s", payload.Reference, payload.Status)
+
+	if err := h.invoiceService.ProcessTripayWebhook(c.Context(), payload); err != nil {
+		log.Printf("[webhook] tripay process error: %v", err)
+		// Always return 200 so Tripay does not keep retrying
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// MidtransCallback handles Midtrans HTTP notification (webhook) callbacks.
+// This endpoint is public (no JWT auth). Signature is verified inside the service using
+// the tenant's stored server key.
+func (h *WebhookHandler) MidtransCallback(c *fiber.Ctx) error {
+	var n payment.MidtransNotification
+	if err := c.BodyParser(&n); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	log.Printf("[webhook] midtrans order_id=%s status=%s", n.OrderID, n.TransactionStatus)
+
+	if err := h.invoiceService.ProcessMidtransWebhook(c.Context(), n); err != nil {
+		log.Printf("[webhook] midtrans process error: %v", err)
+		// Always return 200 so Midtrans does not keep retrying
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// TripayVoucherCallback handles Tripay webhook notifications for voucher purchases.
+func (h *WebhookHandler) TripayVoucherCallback(c *fiber.Ctx) error {
+	if h.voucherService == nil {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": "Layanan voucher tidak dikonfigurasi"})
+	}
+
+	var payload payment.TripayCallbackPayload
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	log.Printf("[webhook] tripay voucher reference=%s status=%s", payload.Reference, payload.Status)
+
+	if err := h.voucherService.ProcessVoucherTripayWebhook(c.Context(), payload); err != nil {
+		log.Printf("[webhook] tripay voucher error: %v", err)
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// MidtransVoucherCallback handles Midtrans webhook notifications for voucher purchases.
+func (h *WebhookHandler) MidtransVoucherCallback(c *fiber.Ctx) error {
+	if h.voucherService == nil {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": "Layanan voucher tidak dikonfigurasi"})
+	}
+
+	var n payment.MidtransNotification
+	if err := c.BodyParser(&n); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	log.Printf("[webhook] midtrans voucher order_id=%s status=%s", n.OrderID, n.TransactionStatus)
+
+	if err := h.voucherService.ProcessVoucherMidtransWebhook(c.Context(), n); err != nil {
+		log.Printf("[webhook] midtrans voucher error: %v", err)
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// TripaySubscriptionCallback handles Tripay webhook for subscription payments.
+func (h *WebhookHandler) TripaySubscriptionCallback(c *fiber.Ctx) error {
+	if h.subscriptionService == nil {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": "Layanan subscription tidak dikonfigurasi"})
+	}
+
+	var payload payment.TripayCallbackPayload
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	log.Printf("[webhook] tripay subscription reference=%s status=%s", payload.Reference, payload.Status)
+
+	if err := h.subscriptionService.ProcessSubTripayWebhook(c.Context(), payload); err != nil {
+		log.Printf("[webhook] tripay subscription error: %v", err)
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// MidtransSubscriptionCallback handles Midtrans webhook for subscription payments.
+func (h *WebhookHandler) MidtransSubscriptionCallback(c *fiber.Ctx) error {
+	if h.subscriptionService == nil {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": "Layanan subscription tidak dikonfigurasi"})
+	}
+
+	var n payment.MidtransNotification
+	if err := c.BodyParser(&n); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	log.Printf("[webhook] midtrans subscription order_id=%s status=%s", n.OrderID, n.TransactionStatus)
+
+	if err := h.subscriptionService.ProcessSubMidtransWebhook(c.Context(), n); err != nil {
+		log.Printf("[webhook] midtrans subscription error: %v", err)
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
