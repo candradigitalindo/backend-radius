@@ -68,6 +68,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	auditLogRepo := repository.NewAuditLogRepository(deps.DB)
 	waRepo := repository.NewWhatsAppRepository(deps.DB)
 	waTemplateRepo := repository.NewWABroadcastTemplateRepository(deps.DB)
+	adminRepo := repository.NewAdminRepository(deps.DB)
 
 	// VPN Manager
 	vpnMgr := vpn.NewManager(
@@ -128,6 +129,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	resellerService := service.NewResellerService(resellerRepo)
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
 	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&deps.Config.PG, deps.Config.App.URL)
+	adminService := service.NewAdminService(adminRepo)
 
 	// GenieACS TR-069 client & service
 	genieacsClient := genieacs.NewClient(deps.Config.GenieACS)
@@ -196,6 +198,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	waHandler := handler.NewWhatsAppHandler(waClient, waRepo).WithBaseURL(deps.Config.App.URL)
 	waTemplateHandler := handler.NewWATemplateHandler(waTemplateRepo)
 	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo)
+	adminHandler := handler.NewAdminHandler(adminService)
 	wsHandler := handler.NewWSHandler(dashboardService, bandwidthService, routerService, deps.Config.JWT.PublicKeyPath)
 	i18nHandler := handler.NewI18nHandler()
 	_ = userHandler
@@ -658,5 +661,12 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	rewardClaims.Get("/", rewardHandler.ListClaims)
 	rewardClaims.Post("/:claimId/apply", middleware.PermissionGuard("rewards.edit"), rewardHandler.ApplyClaim)
 	rewardClaims.Get("/balance/:id", rewardHandler.GetCustomerBalance)
+
+	// SuperAdmin (Pengelola) routes — cross-tenant management
+	admin := v1.Group("/admin", authMiddleware.Handle(), middleware.RoleGuard("superadmin"))
+	admin.Get("/dashboard", adminHandler.GetDashboardStats)
+	admin.Get("/tenants", adminHandler.GetTenantStats)
+	admin.Get("/routers", adminHandler.GetAllRouters)
+	admin.Get("/customers", adminHandler.GetTenantCustomerCounts)
 
 }

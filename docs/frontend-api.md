@@ -27,23 +27,67 @@
 
 ---
 
+### `POST /auth/register`
+Register new tenant (creates tenant + owner user).
+
+**Body:**
+```json
+{ "name": "Nama ISP", "email": "admin@example.com", "password": "secret", "phone": "0812..." }
+```
+
+**Response:** Same as login response.
+
 ### `POST /auth/login`
 Login user admin/staff.
 
 **Body:**
 ```json
-{ "email": "admin@example.com", "password": "secret" }
+{ "email": "admin@example.com", "password": "secret", "tenant_id": "..." }
 ```
+
+> `tenant_id` opsional. Wajib jika email terdaftar di lebih dari satu tenant (response akan return `409 MULTIPLE_TENANTS`).
 
 **Response:**
 ```json
 {
-  "token": "eyJ...",
+  "token": {
+    "access_token": "eyJ...",
+    "refresh_token": "eyJ..."
+  },
   "user": {
-    "id": "...", "name": "Admin", "email": "admin@example.com",
-    "role": "admin", "permissions": ["customers.view", "invoices.pay", ...]
+    "id": "...", "tenant_id": "...", "name": "Admin", "email": "admin@example.com",
+    "role": "admin", "phone": "...", "plan": "pro", "plan_expires_at": "...",
+    "permissions": ["customers.view", "invoices.pay", ...]
   }
 }
+```
+
+### `GET /auth/me`
+Get current authenticated user profile.
+
+**Response:**
+```json
+{
+  "id": "...", "tenant_id": "...", "name": "Admin", "email": "...",
+  "role": "admin", "phone": "...", "plan": "pro", "plan_expires_at": "...",
+  "permissions": ["customers.view", ...]
+}
+```
+
+### `PUT /auth/me`
+Update current user profile (name, phone, email).
+
+**Body:**
+```json
+{ "name": "...", "phone": "...", "email": "..." }
+```
+
+### `PUT /auth/change-password`
+Change own password.
+
+**Body:**
+```json
+{ "current_password": "...", "new_password": "..." }
 ```
 
 ### `POST /auth/logout`
@@ -52,11 +96,36 @@ Invalidates the current token (requires Authorization header).
 ### `POST /auth/refresh`
 Refresh access token.
 
-### `POST /auth/forgot-password`
-**Body:** `{ "email": "..." }`
+**Body:**
+```json
+{ "refresh_token": "eyJ..." }
+```
+
+**Response:**
+```json
+{ "access_token": "eyJ...", "refresh_token": "eyJ..." }
+```
+
+### `POST /auth/reset-pin`
+Request password reset PIN via WhatsApp.
+
+**Body:**
+```json
+{ "email": "admin@example.com", "phone": "0812..." }
+```
+
+**Response:**
+```json
+{ "message": "PIN telah dikirim melalui WhatsApp", "phone": "0812****1234" }
+```
 
 ### `POST /auth/reset-password`
-**Body:** `{ "token": "...", "password": "..." }`
+Verify PIN and reset password.
+
+**Body:**
+```json
+{ "email": "...", "phone": "...", "pin": "123456", "new_password": "newsecret" }
+```
 
 ---
 
@@ -73,7 +142,8 @@ Get current tenant info.
   "logo_url": "...", "timezone": "Asia/Jakarta", "currency": "IDR",
   "billing_cycle": 1, "due_day": 10, "isolir_day": 15, "grace_period": 3,
   "plan": "pro", "plan_expires_at": "...", "max_customers": 500,
-  "wa_sender": "628xxx", "pg_provider": "tripay", "pg_merchant_id": "...",
+  "wa_sender": "628xxx", "pg_provider": "tripay", "pg_api_key": "...", "pg_secret_key": "...",
+  "pg_merchant_id": "...", "pg_sandbox": true,
   "is_active": true, "created_at": "...", "updated_at": "..."
 }
 ```
@@ -714,15 +784,30 @@ Permission: `reminders.view`
 ```json
 {
   "name": "Reminder H-3",
-  "trigger_days_before": 3,
+  "type": "before_due|on_due|after_due",
+  "days_offset": 3,
+  "agenda": "Pengingat jatuh tempo",
   "message_template": "Tagihan {nama} jatuh tempo {jatuh_tempo}",
   "is_active": true
 }
 ```
+
+**Field descriptions:**
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ | Nama pengingat |
+| `type` | enum | ✅ | `before_due` (sebelum JT), `on_due` (saat JT), `after_due` (setelah JT) |
+| `days_offset` | number | ⚠️ | Jumlah hari offset. **Tidak dipakai** jika `type = "on_due"` |
+| `agenda` | string | ❌ | Subjek/agenda pesan WhatsApp |
+| `message_template` | string | ✅ | Template pesan. Mendukung format WhatsApp (`*tebal*`, `_miring_`) |
+| `is_active` | boolean | ❌ | Default `true` |
+
+**Template Variables:** `{salam}`, `{nama}`, `{kode_pelanggan}`, `{nomor_invoice}`, `{periode}`, `{paket}`, `{jumlah}`, `{jatuh_tempo}`
+
 ### `GET /reminders/:id`
 ### `PUT /reminders/:id`
 ### `DELETE /reminders/:id`
-### `POST /reminders/trigger` — Manually trigger reminder sending
+### `POST /reminders/trigger` — Manually trigger reminder sending. Response: `{ "sent": 5 }`
 
 ---
 
@@ -850,14 +935,13 @@ Role: `superadmin` only
 
 ## Customer Portal (Self-service)
 
-Base: `/api/v1/portal`  
 Auth: Customer JWT token from portal login.
 
 ### Public (no auth):
-- `GET /portal/tenant/:slug` — Get tenant info
-- `POST /portal/tenant/:slug/login` — `{ "phone": "...", "password": "..." }`
-- `POST /portal/tenant/:slug/reset-pin` — Request PIN reset
-- `POST /portal/tenant/:slug/reset-password` — `{ "pin": "...", "password": "..." }`
+- `GET /public/portal/:slug` — Get tenant info
+- `POST /public/portal/:slug/login` — `{ "phone": "...", "password": "..." }`
+- `POST /public/portal/:slug/reset-pin` — Request PIN reset
+- `POST /public/portal/:slug/reset-password` — `{ "pin": "...", "password": "..." }`
 
 ### Authenticated customer:
 - `GET /portal/profile`
@@ -876,18 +960,20 @@ Auth: Customer JWT token from portal login.
 
 ## Public Payment Page
 
-No auth required.
+No auth required. Base: `/api/v1/public/pay`
 
-- `GET /pay/:tenant_id/:customer_code` — Get customer info for payment
-- `POST /pay/:tenant_id/:customer_code` — Create payment
-- `GET /pay/check/:trx_id` — Check payment status
+- `GET /public/pay/:tenant_id/:customer_code` — Get customer info for payment
+- `POST /public/pay/:tenant_id/:customer_code` — Create payment
+- `GET /public/pay/check/:trx_id` — Check payment status
 
 ---
 
 ## Public Voucher Store
 
-- `GET /store/:tenant_slug` — List available voucher products
-- `POST /store/:tenant_slug/buy` — Purchase voucher
+No auth required. Base: `/api/v1/public/store`
+
+- `GET /public/store/:tenant_slug` — List available voucher products
+- `POST /public/store/:tenant_slug/buy` — Purchase voucher
 
 ---
 
@@ -923,6 +1009,82 @@ All are public POST endpoints — no auth, signature-verified internally.
 
 **Xendit Webhook Verification:**  
 Xendit mengirim header `x-callback-token` di setiap request. Backend memverifikasi token ini dengan `pg_secret_key` yang tersimpan di tenant settings. Tidak perlu tindakan khusus dari frontend.
+
+---
+
+## SuperAdmin (Pengelola)
+
+> **Role:** `superadmin` only. Cross-tenant management endpoints.
+
+### `GET /admin/dashboard`
+SuperAdmin dashboard overview — all stats across all tenants.
+
+**Response:**
+```json
+{
+  "data": {
+    "total_tenants": 15,
+    "active_tenants": 12,
+    "free_plan_tenants": 8,
+    "pro_plan_tenants": 5,
+    "enterprise_tenants": 2,
+    "total_customers": 4500,
+    "active_customers": 3800,
+    "inactive_customers": 700,
+    "total_routers": 25,
+    "online_routers": 22,
+    "total_revenue": 125000000,
+    "subscriber_count": 7,
+    "tenant_stats": [
+      {
+        "tenant_id": "...", "tenant_name": "ISP A", "slug": "isp-a",
+        "plan": "pro", "is_active": true,
+        "total_customers": 450, "active_customers": 420, "inactive_customers": 30,
+        "total_routers": 5, "online_routers": 5
+      }
+    ]
+  }
+}
+```
+
+### `GET /admin/tenants`
+Per-tenant statistics (customer counts, router counts, plan info).
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tenant_id": "...", "tenant_name": "ISP A", "slug": "isp-a",
+      "plan": "pro", "is_active": true,
+      "total_customers": 450, "active_customers": 420, "inactive_customers": 30,
+      "total_routers": 5, "online_routers": 5
+    }
+  ]
+}
+```
+
+### `GET /admin/routers?page=1&per_page=20`
+All routers across all tenants with monitoring info.
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tenant_id": "...", "tenant_name": "ISP A",
+      "router_id": "...", "router_name": "Router-01",
+      "host": "192.168.1.1", "is_active": true, "last_seen": "2026-05-27T09:00:00Z"
+    }
+  ],
+  "total": 25, "page": 1, "per_page": 20
+}
+```
+
+### `GET /admin/customers`
+Customer counts per tenant (active/inactive breakdown).
+
+**Response:** Same format as `/admin/tenants` — array of tenant stats with customer counts.
 
 ---
 
