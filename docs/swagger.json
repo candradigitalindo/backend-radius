@@ -1,0 +1,7606 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ISP Billing Platform API",
+    "description": "Multi-tenant SaaS backend for ISP billing, FTTH network management, and TR-069 device provisioning.\nAll protected endpoints require a valid JWT Bearer token in the Authorization header.\nTenant isolation is enforced automatically via JWT claims.\n",
+    "version": "1.0.0",
+    "contact": {
+      "name": "API Support"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Authentication & user management"
+    },
+    {
+      "name": "Customers",
+      "description": "Customer management"
+    },
+    {
+      "name": "Packages",
+      "description": "Internet packages / plans"
+    },
+    {
+      "name": "Routers",
+      "description": "MikroTik router management"
+    },
+    {
+      "name": "Invoices",
+      "description": "Invoice & billing"
+    },
+    {
+      "name": "Payments",
+      "description": "Payment records"
+    },
+    {
+      "name": "Tickets",
+      "description": "Support tickets"
+    },
+    {
+      "name": "OLTs",
+      "description": "Optical Line Terminals"
+    },
+    {
+      "name": "ODPs",
+      "description": "Optical Distribution Points"
+    },
+    {
+      "name": "Splitters",
+      "description": "Fiber splitters"
+    },
+    {
+      "name": "ONTs",
+      "description": "Optical Network Terminals"
+    },
+    {
+      "name": "GenieACS",
+      "description": "TR-069 device management via GenieACS"
+    },
+    {
+      "name": "FTTH",
+      "description": "FTTH network dashboard"
+    },
+    {
+      "name": "Vouchers",
+      "description": "Hotspot voucher management"
+    },
+    {
+      "name": "VoucherProducts",
+      "description": "Voucher product catalog"
+    },
+    {
+      "name": "Expenses",
+      "description": "Expense tracking"
+    },
+    {
+      "name": "ExpenseCategories",
+      "description": "Expense categories"
+    },
+    {
+      "name": "Reminders",
+      "description": "Invoice reminder management"
+    },
+    {
+      "name": "WhatsApp",
+      "description": "WhatsApp session management"
+    },
+    {
+      "name": "Broadcasts",
+      "description": "Message broadcasts"
+    },
+    {
+      "name": "CustomerLogs",
+      "description": "Customer activity logs"
+    },
+    {
+      "name": "Settings",
+      "description": "Tenant settings"
+    },
+    {
+      "name": "Tenants",
+      "description": "Tenant management (superadmin)"
+    },
+    {
+      "name": "Dashboard",
+      "description": "Dashboard & analytics"
+    },
+    {
+      "name": "Mobile",
+      "description": "Mobile app API (customer-facing)"
+    },
+    {
+      "name": "MobileNotifications",
+      "description": "Mobile push notification management"
+    },
+    {
+      "name": "Rewards",
+      "description": "Reward program management"
+    },
+    {
+      "name": "Referrals",
+      "description": "Customer referral tracking"
+    },
+    {
+      "name": "RewardClaims",
+      "description": "Reward claim management"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Reward": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "01JTEST00001"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "Reward Referral Standar"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "referral",
+              "loyalty",
+              "promo"
+            ]
+          },
+          "value": {
+            "type": "integer",
+            "example": 50000
+          },
+          "value_type": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "percentage"
+            ]
+          },
+          "min_invoices": {
+            "type": "integer",
+            "example": 1
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RewardInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "value_type"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "referral",
+              "loyalty",
+              "promo"
+            ]
+          },
+          "value": {
+            "type": "integer"
+          },
+          "value_type": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "percentage"
+            ]
+          },
+          "min_invoices": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "RewardStats": {
+        "type": "object",
+        "properties": {
+          "total_referrals": {
+            "type": "integer"
+          },
+          "qualified_referrals": {
+            "type": "integer"
+          },
+          "total_rewarded": {
+            "type": "integer"
+          },
+          "pending_claims": {
+            "type": "integer"
+          },
+          "active_rewards": {
+            "type": "integer"
+          }
+        }
+      },
+      "RewardDashboard": {
+        "type": "object",
+        "properties": {
+          "stats": {
+            "$ref": "#/components/schemas/RewardStats"
+          },
+          "monthly_trends": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "year": {
+                  "type": "integer"
+                },
+                "month": {
+                  "type": "integer"
+                },
+                "referrals": {
+                  "type": "integer"
+                },
+                "qualified": {
+                  "type": "integer"
+                },
+                "claims": {
+                  "type": "integer"
+                },
+                "claimed_amount": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "top_referrers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "customer_name": {
+                  "type": "string"
+                },
+                "referral_count": {
+                  "type": "integer"
+                },
+                "qualified_count": {
+                  "type": "integer"
+                },
+                "total_rewarded": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "recent_referrals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Referral"
+            }
+          },
+          "recent_claims": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RewardClaim"
+            }
+          },
+          "claim_breakdown": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "total_amount": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Referral": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "referrer_id": {
+            "type": "string"
+          },
+          "referrer_name": {
+            "type": "string"
+          },
+          "referred_id": {
+            "type": "string"
+          },
+          "referred_name": {
+            "type": "string"
+          },
+          "reward_id": {
+            "type": "string"
+          },
+          "referral_code": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "qualified",
+              "rewarded",
+              "expired"
+            ]
+          },
+          "reward_amount": {
+            "type": "integer"
+          },
+          "qualified_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "rewarded_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RewardClaim": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "string"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "reward_id": {
+            "type": "string"
+          },
+          "reward_name": {
+            "type": "string"
+          },
+          "referral_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "balance_credit",
+              "invoice_discount"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "applied",
+              "expired"
+            ]
+          },
+          "applied_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Broadcast": {
+        "type": "object",
+        "properties": {},
+        "description": "Broadcast"
+      },
+      "BroadcastCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "BroadcastCreate input payload"
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {},
+        "description": "Customer"
+      },
+      "CustomerAccessUpdate": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerAccessUpdate"
+      },
+      "CustomerCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerCreate input payload"
+      },
+      "CustomerDetailResponse": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerDetailResponse response"
+      },
+      "CustomerLog": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerLog"
+      },
+      "CustomerLogCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerLogCreate input payload"
+      },
+      "CustomerProfileUpdate": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerProfileUpdate"
+      },
+      "CustomerServiceUpdate": {
+        "type": "object",
+        "properties": {},
+        "description": "CustomerServiceUpdate"
+      },
+      "Error": {
+        "type": "object",
+        "properties": {},
+        "description": "Error"
+      },
+      "Expense": {
+        "type": "object",
+        "properties": {},
+        "description": "Expense"
+      },
+      "ExpenseCategory": {
+        "type": "object",
+        "properties": {},
+        "description": "ExpenseCategory"
+      },
+      "ExpenseCategoryCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "ExpenseCategoryCreate input payload"
+      },
+      "ExpenseCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "ExpenseCreate input payload"
+      },
+      "Invoice": {
+        "type": "object",
+        "properties": {},
+        "description": "Invoice"
+      },
+      "InvoiceCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "InvoiceCreate input payload"
+      },
+      "InvoiceGenerate": {
+        "type": "object",
+        "properties": {},
+        "description": "InvoiceGenerate input payload"
+      },
+      "Message": {
+        "type": "object",
+        "properties": {},
+        "description": "Message"
+      },
+      "MobileCustomer": {
+        "type": "object",
+        "properties": {},
+        "description": "MobileCustomer"
+      },
+      "MobileCustomerDetail": {
+        "type": "object",
+        "properties": {},
+        "description": "MobileCustomerDetail response"
+      },
+      "MobileInvoice": {
+        "type": "object",
+        "properties": {},
+        "description": "MobileInvoice"
+      },
+      "MobileNotification": {
+        "type": "object",
+        "properties": {},
+        "description": "MobileNotification"
+      },
+      "MobilePackage": {
+        "type": "object",
+        "properties": {},
+        "description": "MobilePackage"
+      },
+      "MobileTicket": {
+        "type": "object",
+        "properties": {},
+        "description": "MobileTicket"
+      },
+      "MobileTokenPair": {
+        "type": "object",
+        "properties": {},
+        "description": "MobileTokenPair"
+      },
+      "ODP": {
+        "type": "object",
+        "properties": {},
+        "description": "ODP"
+      },
+      "ODPCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "ODPCreate input payload"
+      },
+      "ODPPort": {
+        "type": "object",
+        "properties": {},
+        "description": "ODPPort"
+      },
+      "ODPPortCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "ODPPortCreate input payload"
+      },
+      "OLT": {
+        "type": "object",
+        "properties": {},
+        "description": "OLT"
+      },
+      "OLTCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "OLTCreate input payload"
+      },
+      "ONT": {
+        "type": "object",
+        "properties": {},
+        "description": "ONT"
+      },
+      "ONTCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "ONTCreate input payload"
+      },
+      "ONTUpdate": {
+        "type": "object",
+        "properties": {},
+        "description": "ONTUpdate"
+      },
+      "PONPort": {
+        "type": "object",
+        "properties": {},
+        "description": "PONPort"
+      },
+      "PONPortCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "PONPortCreate input payload"
+      },
+      "Package": {
+        "type": "object",
+        "properties": {},
+        "description": "Package"
+      },
+      "PackageCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "PackageCreate input payload"
+      },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {},
+        "description": "PaginationMeta"
+      },
+      "Payment": {
+        "type": "object",
+        "properties": {},
+        "description": "Payment"
+      },
+      "PaymentCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "PaymentCreate input payload"
+      },
+      "RadiusSession": {
+        "type": "object",
+        "properties": {},
+        "description": "RadiusSession"
+      },
+      "Reminder": {
+        "type": "object",
+        "properties": {},
+        "description": "Reminder"
+      },
+      "ReminderCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "ReminderCreate input payload"
+      },
+      "Router": {
+        "type": "object",
+        "properties": {},
+        "description": "Router"
+      },
+      "RouterCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "RouterCreate input payload"
+      },
+      "RouterTraffic": {
+        "type": "object",
+        "properties": {},
+        "description": "RouterTraffic"
+      },
+      "Setting": {
+        "type": "object",
+        "properties": {},
+        "description": "Setting"
+      },
+      "Splitter": {
+        "type": "object",
+        "properties": {},
+        "description": "Splitter"
+      },
+      "SplitterCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "SplitterCreate input payload"
+      },
+      "SubscriptionConfirmPaymentRequest": {
+        "type": "object",
+        "properties": {},
+        "description": "SubscriptionConfirmPaymentRequest"
+      },
+      "SubscriptionCreatePaymentRequest": {
+        "type": "object",
+        "properties": {},
+        "description": "SubscriptionCreatePaymentRequest input payload"
+      },
+      "SubscriptionOrder": {
+        "type": "object",
+        "properties": {},
+        "description": "SubscriptionOrder"
+      },
+      "SubscriptionPlan": {
+        "type": "object",
+        "properties": {},
+        "description": "SubscriptionPlan"
+      },
+      "SubscriptionSubscribeRequest": {
+        "type": "object",
+        "properties": {},
+        "description": "SubscriptionSubscribeRequest"
+      },
+      "Tenant": {
+        "type": "object",
+        "properties": {},
+        "description": "Tenant"
+      },
+      "TenantCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "TenantCreate input payload"
+      },
+      "Ticket": {
+        "type": "object",
+        "properties": {},
+        "description": "Ticket"
+      },
+      "TicketCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "TicketCreate input payload"
+      },
+      "TicketMessage": {
+        "type": "object",
+        "properties": {},
+        "description": "TicketMessage"
+      },
+      "TokenPair": {
+        "type": "object",
+        "properties": {},
+        "description": "TokenPair"
+      },
+      "User": {
+        "type": "object",
+        "properties": {},
+        "description": "User"
+      },
+      "Voucher": {
+        "type": "object",
+        "properties": {},
+        "description": "Voucher"
+      },
+      "VoucherGenerate": {
+        "type": "object",
+        "properties": {},
+        "description": "VoucherGenerate input payload"
+      },
+      "VoucherPayment": {
+        "type": "object",
+        "properties": {},
+        "description": "VoucherPayment"
+      },
+      "VoucherProduct": {
+        "type": "object",
+        "properties": {},
+        "description": "VoucherProduct"
+      },
+      "VoucherProductCreate": {
+        "type": "object",
+        "properties": {},
+        "description": "VoucherProductCreate input payload"
+      },
+      "WASessionStatus": {
+        "type": "object",
+        "properties": {},
+        "description": "WASessionStatus"
+      }
+    },
+    "parameters": {
+      "PageParam": {
+        "name": "page",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "PerPageParam": {
+        "name": "per_page",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "default": 20
+        }
+      },
+      "SearchParam": {
+        "name": "search",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "IDPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Health check",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "service": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Register a new user",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "tenant_id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8
+                  },
+                  "phone": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "tenant_id": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Refresh access token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refresh_token"
+                ],
+                "properties": {
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get current user",
+        "responses": {
+          "200": {
+            "description": "Current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Logout",
+        "responses": {
+          "200": {
+            "description": "Logged out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/customers": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "List customers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "router_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated customer list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Customer"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Create customer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Customer created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/customers/{id}": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customer by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Customer detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Update customer profile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerProfileUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Customer updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Delete customer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/customers/{id}/profile": {
+      "put": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Update customer profile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerProfileUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Customer profile updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/customers/{id}/access": {
+      "put": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Update customer connection access",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerAccessUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Customer access updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/customers/{id}/service": {
+      "put": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Update customer service package and billing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerServiceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Customer service package updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/customers/{id}/isolate": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Isolate customer (suspend service)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Isolated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/customers/{id}/activate": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Activate customer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Activated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/customers/{id}/logs": {
+      "get": {
+        "tags": [
+          "CustomerLogs"
+        ],
+        "summary": "List logs for a customer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          },
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated logs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CustomerLog"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/customers/{id}/ont": {
+      "get": {
+        "tags": [
+          "ONTs"
+        ],
+        "summary": "Get ONT by customer ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ONT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ONT"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/packages": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "List packages",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated packages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Package"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Create package",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackageCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Package created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Package"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/packages/{id}": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Get package by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Package detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Package"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Update package",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackageCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Package updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Package"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Delete package",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/routers": {
+      "get": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "List routers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated routers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Router"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Create router",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouterCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Router created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Router"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/routers/heartbeat": {
+      "post": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Router heartbeat (public)",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "router_os_ver": {
+                    "type": "string"
+                  },
+                  "board_name": {
+                    "type": "string"
+                  },
+                  "uptime": {
+                    "type": "string"
+                  },
+                  "cpu_load": {
+                    "type": "integer"
+                  },
+                  "free_memory": {
+                    "type": "integer"
+                  },
+                  "total_memory": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routers/vpn/peers": {
+      "get": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "List VPN peers",
+        "responses": {
+          "200": {
+            "description": "Peer list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "peers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routers/{id}": {
+      "get": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Get router by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Router detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Router"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Update router",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouterCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Router updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Router"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Delete router",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/routers/{id}/regenerate-token": {
+      "post": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Regenerate heartbeat token",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "New token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "heartbeat_token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routers/{id}/sessions": {
+      "get": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "List active sessions for a router",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          },
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/RadiusSession"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routers/{id}/traffic": {
+      "get": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Get router traffic stats",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Traffic stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouterTraffic"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routers/{id}/test": {
+      "post": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Test router connection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reachability test result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reachable": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routers/{id}/sync": {
+      "post": {
+        "tags": [
+          "Routers"
+        ],
+        "summary": "Sync and clean stale sessions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cleaned_sessions": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invoices": {
+      "get": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "List invoices",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "period_month",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "period_year",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated invoices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Invoice"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "Create invoice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invoice created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invoice"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/invoices/generate": {
+      "post": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "Generate monthly invoices",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceGenerate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "generated": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invoices/{id}": {
+      "get": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "Get invoice by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invoice detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invoice"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "Update invoice",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invoice updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invoice"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "Delete invoice",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/invoices/{id}/pay": {
+      "post": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "Record payment for invoice",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/invoices/{id}/payments": {
+      "get": {
+        "tags": [
+          "Invoices"
+        ],
+        "summary": "List payments for an invoice",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Payment"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments": {
+      "get": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "List all payments",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated payments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Payment"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets": {
+      "get": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "List tickets",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated tickets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Ticket"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Create ticket",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Ticket created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/tickets/{id}": {
+      "get": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Get ticket by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Update ticket",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Delete ticket",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/tickets/{id}/status": {
+      "put": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Update ticket status",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "in_progress",
+                      "resolved",
+                      "closed"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/assign": {
+      "put": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Assign ticket to user",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "user_id"
+                ],
+                "properties": {
+                  "user_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/messages": {
+      "get": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Get ticket messages",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TicketMessage"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tickets"
+        ],
+        "summary": "Add message to ticket",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "message"
+                ],
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "attachment_url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Message added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketMessage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/olts": {
+      "get": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "List OLTs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated OLTs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OLT"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Create OLT",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OLTCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OLT created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OLT"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/olts/{id}": {
+      "get": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Get OLT by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OLT detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OLT"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Update OLT",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OLTCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OLT updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OLT"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Delete OLT",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/olts/{id}/pon-ports": {
+      "get": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "List PON ports for an OLT",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PON port list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PONPort"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Create PON port",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PONPortCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "PON port created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PONPort"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/olts/{id}/pon-ports/{portId}": {
+      "put": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Update PON port",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          },
+          {
+            "name": "portId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PON port updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PONPort"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "OLTs"
+        ],
+        "summary": "Delete PON port",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          },
+          {
+            "name": "portId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/odps": {
+      "get": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "List ODPs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "olt_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "splitter_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated ODPs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ODP"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Create ODP",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ODPCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "ODP created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ODP"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/odps/{id}": {
+      "get": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Get ODP by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ODP detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ODP"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Update ODP",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ODPCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ODP updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ODP"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Delete ODP",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/odps/{id}/ports": {
+      "get": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "List ODP ports",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Port list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ODPPort"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Create ODP port",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ODPPortCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "ODP port created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ODPPort"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/odps/{id}/ports/{portId}": {
+      "put": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Update ODP port",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          },
+          {
+            "name": "portId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "customer_id": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ODP port updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ODPPort"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ODPs"
+        ],
+        "summary": "Delete ODP port",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          },
+          {
+            "name": "portId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/splitters": {
+      "get": {
+        "tags": [
+          "Splitters"
+        ],
+        "summary": "List splitters",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated splitters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Splitter"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Splitters"
+        ],
+        "summary": "Create splitter",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitterCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Splitter created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Splitter"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/splitters/{id}": {
+      "get": {
+        "tags": [
+          "Splitters"
+        ],
+        "summary": "Get splitter by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Splitter detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Splitter"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Splitters"
+        ],
+        "summary": "Update splitter",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitterCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Splitter updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Splitter"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Splitters"
+        ],
+        "summary": "Delete splitter",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/onts": {
+      "get": {
+        "tags": [
+          "ONTs"
+        ],
+        "summary": "List ONTs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated ONTs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ONT"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "ONTs"
+        ],
+        "summary": "Create ONT",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ONTCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "ONT created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ONT"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/onts/{id}": {
+      "get": {
+        "tags": [
+          "ONTs"
+        ],
+        "summary": "Get ONT by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ONT detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ONT"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ONTs"
+        ],
+        "summary": "Update ONT",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ONTUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ONT updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ONT"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ONTs"
+        ],
+        "summary": "Delete ONT",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/onts/{id}/sync": {
+      "post": {
+        "tags": [
+          "GenieACS"
+        ],
+        "summary": "Sync ONT with TR-069 ACS",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ONT synced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ONT"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/onts/{id}/reboot": {
+      "post": {
+        "tags": [
+          "GenieACS"
+        ],
+        "summary": "Reboot ONT via TR-069",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reboot sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/onts/{id}/wifi": {
+      "post": {
+        "tags": [
+          "GenieACS"
+        ],
+        "summary": "Set ONT WiFi SSID and password",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ssid"
+                ],
+                "properties": {
+                  "ssid": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "security": {
+                    "type": "string",
+                    "enum": [
+                      "None",
+                      "WPA",
+                      "11i",
+                      "WPAand11i"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "WiFi updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/onts/{id}/provision": {
+      "post": {
+        "tags": [
+          "GenieACS"
+        ],
+        "summary": "Provision ONT in TR-069 ACS",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provisioned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/acs/devices": {
+      "get": {
+        "tags": [
+          "GenieACS"
+        ],
+        "summary": "List all TR-069 devices",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "GenieACS query filter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/acs/devices/{id}": {
+      "get": {
+        "tags": [
+          "GenieACS"
+        ],
+        "summary": "Get TR-069 device by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/ftth/stats": {
+      "get": {
+        "tags": [
+          "FTTH"
+        ],
+        "summary": "Get FTTH network stats",
+        "responses": {
+          "200": {
+            "description": "FTTH stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ftth/map": {
+      "get": {
+        "tags": [
+          "FTTH"
+        ],
+        "summary": "Get FTTH network map data",
+        "responses": {
+          "200": {
+            "description": "Map data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/voucher-products": {
+      "get": {
+        "tags": [
+          "VoucherProducts"
+        ],
+        "summary": "List voucher products",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/VoucherProduct"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "VoucherProducts"
+        ],
+        "summary": "Create voucher product",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoucherProductCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoucherProduct"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/voucher-products/{id}": {
+      "get": {
+        "tags": [
+          "VoucherProducts"
+        ],
+        "summary": "Get voucher product by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoucherProduct"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "VoucherProducts"
+        ],
+        "summary": "Update voucher product",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoucherProductCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Product updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoucherProduct"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "VoucherProducts"
+        ],
+        "summary": "Delete voucher product",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/voucher-products/{id}/available": {
+      "get": {
+        "tags": [
+          "VoucherProducts"
+        ],
+        "summary": "Count available vouchers for a product",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Available count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "available": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vouchers": {
+      "get": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "List vouchers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated vouchers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Voucher"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vouchers/generate": {
+      "post": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "Generate vouchers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoucherGenerate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Vouchers generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "generated": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vouchers/{id}": {
+      "get": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "Get voucher by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voucher detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Voucher"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "Delete voucher",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vouchers/{id}/sell": {
+      "post": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "Sell voucher",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "buyer_phone"
+                ],
+                "properties": {
+                  "buyer_phone": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Voucher sold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoucherPayment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vouchers/{id}/activate": {
+      "post": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "Activate voucher",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voucher activated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Voucher"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/voucher-payments": {
+      "get": {
+        "tags": [
+          "Vouchers"
+        ],
+        "summary": "List voucher payments",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated voucher payments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/VoucherPayment"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/expense-categories": {
+      "get": {
+        "tags": [
+          "ExpenseCategories"
+        ],
+        "summary": "List expense categories",
+        "responses": {
+          "200": {
+            "description": "Category list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ExpenseCategory"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "ExpenseCategories"
+        ],
+        "summary": "Create expense category",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseCategoryCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Category created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseCategory"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/expense-categories/{id}": {
+      "get": {
+        "tags": [
+          "ExpenseCategories"
+        ],
+        "summary": "Get expense category by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Category detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseCategory"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ExpenseCategories"
+        ],
+        "summary": "Update expense category",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseCategoryCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Category updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseCategory"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ExpenseCategories"
+        ],
+        "summary": "Delete expense category",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/expenses": {
+      "get": {
+        "tags": [
+          "Expenses"
+        ],
+        "summary": "List expenses",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated expenses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Expense"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Expenses"
+        ],
+        "summary": "Create expense",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Expense created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Expense"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/expenses/summary": {
+      "get": {
+        "tags": [
+          "Expenses"
+        ],
+        "summary": "Get expense summary",
+        "responses": {
+          "200": {
+            "description": "Expense summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/expenses/{id}": {
+      "get": {
+        "tags": [
+          "Expenses"
+        ],
+        "summary": "Get expense by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Expense detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Expense"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Expenses"
+        ],
+        "summary": "Update expense",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Expense updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Expense"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Expenses"
+        ],
+        "summary": "Delete expense",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/broadcasts": {
+      "get": {
+        "tags": [
+          "Broadcasts"
+        ],
+        "summary": "List broadcasts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated broadcasts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Broadcast"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Broadcasts"
+        ],
+        "summary": "Send broadcast",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BroadcastCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Broadcast sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Broadcast"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/broadcasts/{id}": {
+      "get": {
+        "tags": [
+          "Broadcasts"
+        ],
+        "summary": "Get broadcast by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Broadcast detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Broadcast"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Broadcasts"
+        ],
+        "summary": "Delete broadcast",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/customer-logs": {
+      "get": {
+        "tags": [
+          "CustomerLogs"
+        ],
+        "summary": "List customer logs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated logs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CustomerLog"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "CustomerLogs"
+        ],
+        "summary": "Create customer log",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerLogCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Log created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLog"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/customer-logs/{id}": {
+      "get": {
+        "tags": [
+          "CustomerLogs"
+        ],
+        "summary": "Get customer log by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLog"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "List all settings",
+        "responses": {
+          "200": {
+            "description": "Settings map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Set a setting",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Setting saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings/bulk": {
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Bulk set settings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "settings": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings/{key}": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Get setting by key",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Setting value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Setting"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Delete setting",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/subscription/plans": {
+      "get": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "List active subscription plans",
+        "responses": {
+          "200": {
+            "description": "Subscription plans",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SubscriptionPlan"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/subscription/plans/{id}": {
+      "get": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "Get subscription plan detail",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription plan detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionPlan"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/subscription/subscribe": {
+      "post": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "Create subscription order for current tenant",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionSubscribeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subscription order created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionOrder"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/subscription/orders": {
+      "get": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "List current tenant subscription orders",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/SubscriptionOrder"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/subscription/orders/{id}": {
+      "get": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "Get subscription order detail",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription order detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionOrder"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/subscription/orders/{id}/pay": {
+      "post": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "Create payment link for subscription order",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionCreatePaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payment link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/subscription/orders/{id}/confirm": {
+      "post": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "Confirm subscription payment",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionConfirmPaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription payment confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionOrder"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/tenant": {
+      "get": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Get current tenant",
+        "responses": {
+          "200": {
+            "description": "Tenant detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Update current tenant",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tenant updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tenant/settings": {
+      "put": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Update tenant integration settings (WhatsApp & Payment Gateway)",
+        "description": "Update payment gateway and WhatsApp credentials.\n\n**Payment Gateway Providers:**\n- `tripay` \u2014 pg_api_key = API Key, pg_secret_key = Private Key, pg_merchant_id = Merchant Code\n- `midtrans` \u2014 pg_api_key = Client Key, pg_secret_key = Server Key (pg_merchant_id not used)\n- `xendit` \u2014 pg_api_key = Secret Key (xnd_...), pg_secret_key = Webhook Verification Token (from Xendit Dashboard \u2192 Settings \u2192 Callbacks), pg_merchant_id not used\n\n**pg_sandbox:** Set to `true` for testing (sandbox/development mode), `false` for production.\nFor Xendit, sandbox vs production is determined by the API key prefix (`xnd_development_` vs `xnd_production_`),\nbut this flag is still stored for consistency.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "wa_api_key": {
+                    "type": "string",
+                    "description": "WhatsApp API key"
+                  },
+                  "wa_sender": {
+                    "type": "string",
+                    "description": "WhatsApp sender number (e.g. 628xxx)"
+                  },
+                  "pg_provider": {
+                    "type": "string",
+                    "enum": [
+                      "tripay",
+                      "midtrans",
+                      "xendit"
+                    ],
+                    "description": "Payment gateway provider"
+                  },
+                  "pg_api_key": {
+                    "type": "string",
+                    "description": "Tripay: API Key | Midtrans: Client Key | Xendit: Secret Key (xnd_...)"
+                  },
+                  "pg_secret_key": {
+                    "type": "string",
+                    "description": "Tripay: Private Key | Midtrans: Server Key | Xendit: Webhook Verification Token"
+                  },
+                  "pg_merchant_id": {
+                    "type": "string",
+                    "description": "Tripay: Merchant Code (not used for Midtrans/Xendit)"
+                  },
+                  "pg_sandbox": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "true = sandbox/test mode, false = production"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tenant/settings/test": {
+      "post": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Test payment gateway connection",
+        "description": "Verifies that the payment gateway credentials configured for the current tenant are valid\nby making a lightweight authenticated request to the provider's API.\n\n- **Tripay:** calls `/merchant/profile` with the API Key\n- **Midtrans:** calls `/v2/payment-types` with the Server Key (Basic Auth)\n- **Xendit:** calls `/balance` with the Secret Key (Basic Auth)\n\nReturns `200 OK` with `success: true` if the credentials are valid.\nReturns `400 Bad Request` with `success: false` and an error message if the credentials are invalid or the gateway is unreachable.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Koneksi payment gateway berhasil"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Connection failed (invalid credentials or gateway unreachable)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "string",
+                      "example": "Tripay: Invalid API Key"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/tenant/webhook-urls": {
+      "get": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Get webhook URLs to register in payment gateway dashboards",
+        "description": "Returns the full callback URLs that must be registered in each payment gateway dashboard.\n\n**Xendit:** Register the `xendit` URL in Xendit Dashboard \u2192 Settings \u2192 Callbacks \u2192 Invoice Paid.\nThe `x-callback-token` header will be verified against `pg_secret_key` (Webhook Verification Token).\n",
+        "responses": {
+          "200": {
+            "description": "Webhook URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "tripay": {
+                          "type": "string",
+                          "example": "https://api.example.com/api/v1/webhooks/tripay"
+                        },
+                        "tripay_voucher": {
+                          "type": "string"
+                        },
+                        "tripay_subscription": {
+                          "type": "string"
+                        },
+                        "midtrans": {
+                          "type": "string"
+                        },
+                        "midtrans_voucher": {
+                          "type": "string"
+                        },
+                        "midtrans_subscription": {
+                          "type": "string"
+                        },
+                        "xendit": {
+                          "type": "string",
+                          "example": "https://api.example.com/api/v1/webhooks/xendit"
+                        },
+                        "xendit_voucher": {
+                          "type": "string"
+                        },
+                        "xendit_subscription": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tenants": {
+      "get": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "List tenants (superadmin)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/SearchParam"
+          },
+          {
+            "name": "plan",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated tenants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Tenant"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Create tenant (superadmin)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tenant created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tenants/{id}": {
+      "get": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Get tenant by ID (superadmin)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/dashboard/stats": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Get dashboard stats",
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dashboard stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/revenue": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Get monthly revenue chart",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revenue data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "year": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reminders": {
+      "get": {
+        "tags": [
+          "Reminders"
+        ],
+        "summary": "List reminders",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated reminders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Reminder"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Reminders"
+        ],
+        "summary": "Create reminder",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReminderCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reminder created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reminder"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reminders/{id}": {
+      "get": {
+        "tags": [
+          "Reminders"
+        ],
+        "summary": "Get reminder by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reminder detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reminder"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Reminders"
+        ],
+        "summary": "Update reminder",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReminderCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reminder"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Reminders"
+        ],
+        "summary": "Delete reminder",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IDPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reminders/trigger": {
+      "post": {
+        "tags": [
+          "Reminders"
+        ],
+        "summary": "Trigger all active reminders",
+        "description": "Triggers all active reminders for the current tenant.\nFor each reminder, calculates target date based on type + days_offset,\nqueries unpaid invoices matching that date, and sends WhatsApp messages asynchronously.\n",
+        "responses": {
+          "200": {
+            "description": "Reminders triggered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/whatsapp/sessions/start": {
+      "post": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Start WhatsApp session",
+        "description": "Start a new WhatsApp session for the tenant. After starting, scan QR code from the QR endpoint.",
+        "responses": {
+          "200": {
+            "description": "Session started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WASessionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/whatsapp/sessions/status": {
+      "get": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Get WhatsApp session status",
+        "responses": {
+          "200": {
+            "description": "Session status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WASessionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/whatsapp/sessions/qr": {
+      "get": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Get QR code for WhatsApp pairing",
+        "description": "Returns a base64-encoded PNG QR code image for scanning with WhatsApp mobile app.",
+        "responses": {
+          "200": {
+            "description": "QR code data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "qr": {
+                          "type": "string",
+                          "description": "Base64 data URL of QR code image"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/whatsapp/sessions": {
+      "delete": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Stop WhatsApp session",
+        "responses": {
+          "200": {
+            "description": "Session stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/whatsapp/send": {
+      "post": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Send a single WhatsApp message",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "phone",
+                  "message"
+                ],
+                "properties": {
+                  "phone": {
+                    "type": "string",
+                    "example": "081234567890"
+                  },
+                  "message": {
+                    "type": "string",
+                    "example": "Halo, ini pesan test."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string"
+                        },
+                        "jid": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/auth/login": {
+      "post": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "Login pelanggan (nomor pelanggan + password)",
+        "description": "Autentikasi pelanggan menggunakan nomor pelanggan dan password.\nTidak memerlukan tenant_id \u2014 data tenant didapat dari response.\n",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "customer_code",
+                  "password"
+                ],
+                "properties": {
+                  "customer_code": {
+                    "type": "string",
+                    "example": "260327001"
+                  },
+                  "password": {
+                    "type": "string",
+                    "example": "password123"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login berhasil",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "$ref": "#/components/schemas/MobileTokenPair"
+                    },
+                    "customer": {
+                      "$ref": "#/components/schemas/MobileCustomer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Nomor pelanggan atau password salah",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Akun belum diaktivasi (password belum diset)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/profile": {
+      "get": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "Get profil pelanggan",
+        "responses": {
+          "200": {
+            "description": "Profil pelanggan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer": {
+                      "$ref": "#/components/schemas/MobileCustomerDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pelanggan tidak ditemukan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/invoices": {
+      "get": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "List tagihan pelanggan",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar tagihan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invoices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MobileInvoice"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "per_page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/packages": {
+      "get": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "List paket internet tersedia",
+        "responses": {
+          "200": {
+            "description": "Daftar paket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "packages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MobilePackage"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/tickets": {
+      "get": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "List tiket pelanggan",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar tiket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tickets": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MobileTicket"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "per_page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "Buat tiket baru",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subject",
+                  "description"
+                ],
+                "properties": {
+                  "subject": {
+                    "type": "string",
+                    "example": "Internet lambat"
+                  },
+                  "description": {
+                    "type": "string",
+                    "example": "Speed hanya 2 Mbps padahal paket 20 Mbps"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "general",
+                      "gangguan",
+                      "billing",
+                      "upgrade",
+                      "lainnya"
+                    ],
+                    "default": "general"
+                  },
+                  "priority": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "urgent"
+                    ],
+                    "default": "medium"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tiket dibuat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket": {
+                      "$ref": "#/components/schemas/MobileTicket"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/tickets/{id}": {
+      "get": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "Detail tiket beserta pesan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detail tiket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/MobileTicket"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "messages": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/TicketMessage"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/tickets/{id}/messages": {
+      "post": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "Balas tiket",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "message"
+                ],
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "example": "Masih lambat, mohon dicek lagi"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pesan ditambahkan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "$ref": "#/components/schemas/TicketMessage"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/upgrade": {
+      "post": {
+        "tags": [
+          "Mobile"
+        ],
+        "summary": "Ajukan upgrade paket",
+        "description": "Membuat tiket otomatis dengan kategori \"upgrade\".",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "package_id"
+                ],
+                "properties": {
+                  "package_id": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "example": "Ingin upgrade ke paket 30 Mbps"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Permintaan upgrade terkirim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/notifications/register-device": {
+      "post": {
+        "tags": [
+          "MobileNotifications"
+        ],
+        "summary": "Register device untuk push notification",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "device_type",
+                  "fcm_token"
+                ],
+                "properties": {
+                  "device_type": {
+                    "type": "string",
+                    "enum": [
+                      "android",
+                      "ios"
+                    ]
+                  },
+                  "fcm_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Perangkat terdaftar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/notifications/unregister-device": {
+      "delete": {
+        "tags": [
+          "MobileNotifications"
+        ],
+        "summary": "Unregister device (saat logout)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fcm_token"
+                ],
+                "properties": {
+                  "fcm_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Perangkat dihapus",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/notifications": {
+      "get": {
+        "tags": [
+          "MobileNotifications"
+        ],
+        "summary": "List notifikasi",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar notifikasi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notifications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MobileNotification"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "per_page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/notifications/{id}/read": {
+      "put": {
+        "tags": [
+          "MobileNotifications"
+        ],
+        "summary": "Tandai notifikasi sudah dibaca",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifikasi ditandai dibaca",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/notifications/read-all": {
+      "put": {
+        "tags": [
+          "MobileNotifications"
+        ],
+        "summary": "Tandai semua notifikasi sudah dibaca",
+        "responses": {
+          "200": {
+            "description": "Semua notifikasi ditandai dibaca",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/notifications/unread-count": {
+      "get": {
+        "tags": [
+          "MobileNotifications"
+        ],
+        "summary": "Jumlah notifikasi belum dibaca",
+        "responses": {
+          "200": {
+            "description": "Jumlah unread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "unread_count": {
+                      "type": "integer",
+                      "example": 3
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rewards": {
+      "get": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Daftar program reward",
+        "parameters": [
+          {
+            "name": "active_only",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Hanya tampilkan reward aktif"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar reward",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Reward"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "per_page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Buat program reward baru",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewardInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reward dibuat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Reward"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/rewards/stats": {
+      "get": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Statistik ringkasan reward tenant",
+        "responses": {
+          "200": {
+            "description": "Statistik reward",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/RewardStats"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rewards/dashboard": {
+      "get": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Dashboard lengkap program reward",
+        "parameters": [
+          {
+            "name": "months",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 12,
+              "minimum": 1,
+              "maximum": 24
+            },
+            "description": "Rentang bulan untuk tren"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dashboard reward",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "months": {
+                      "type": "integer"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RewardDashboard"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rewards/{id}": {
+      "get": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Detail program reward",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detail reward",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Reward"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Update program reward",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewardInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reward diperbarui",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Rewards"
+        ],
+        "summary": "Hapus program reward",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reward dihapus",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/referrals": {
+      "get": {
+        "tags": [
+          "Referrals"
+        ],
+        "summary": "Daftar referral",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter berdasarkan customer (referrer atau referred)"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "qualified",
+                "rewarded",
+                "expired"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar referral",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Referral"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "per_page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/referrals/{id}": {
+      "get": {
+        "tags": [
+          "Referrals"
+        ],
+        "summary": "Detail referral",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detail referral",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Referral"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/referrals/{id}/reward": {
+      "post": {
+        "tags": [
+          "Referrals"
+        ],
+        "summary": "Tandai referral sudah diberi reward (manual admin)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Referral ditandai diberi reward",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/reward-claims": {
+      "get": {
+        "tags": [
+          "RewardClaims"
+        ],
+        "summary": "Daftar klaim reward",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter klaim milik customer tertentu"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "applied",
+                "expired"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar klaim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RewardClaim"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "per_page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reward-claims/{claimId}/apply": {
+      "post": {
+        "tags": [
+          "RewardClaims"
+        ],
+        "summary": "Terapkan klaim ke customer",
+        "parameters": [
+          {
+            "name": "claimId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Klaim diterapkan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Klaim tidak ditemukan atau sudah applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reward-claims/balance/{id}": {
+      "get": {
+        "tags": [
+          "RewardClaims"
+        ],
+        "summary": "Cek total saldo klaim pending milik customer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saldo klaim pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "balance": {
+                      "type": "integer",
+                      "example": 150000
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

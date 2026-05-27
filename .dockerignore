@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.example
+docker-compose.yml
+Dockerfile
+*.md
+nginx/
+storage/
+logs/
+api
+migrate
+worker

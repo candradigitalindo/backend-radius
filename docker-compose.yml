@@ -1,0 +1,77 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: radius_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-backend_radius}
+      POSTGRES_USER: ${DB_USER:-backend_radius}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-radius_secret_2024}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-backend_radius} -d ${DB_NAME:-backend_radius}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: radius_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: radius_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./keys:/app/keys
+      - storage:/app/storage
+      - ./docs/swagger.json:/app/docs/swagger.json:ro
+      - ./static/swagger.html:/app/static/swagger.html:ro
+    expose:
+      - "3000"
+      - "1812/udp"
+      - "1813/udp"
+    ports:
+      - "3000:3000"
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+
+  nginx:
+    image: nginx:alpine
+    container_name: radius_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  redisdata:
+  storage:

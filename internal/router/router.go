@@ -245,9 +245,18 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Router heartbeat (public - called by MikroTik)
 	v1.Post("/routers/heartbeat", publicLimiter, routerHandler.Heartbeat)
 
+	// Swagger UI at root (port 3000)
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendFile("./static/swagger.html")
+	})
+	app.Get("/swagger.json", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "application/json")
+		return c.SendFile("./docs/swagger.json")
+	})
+
 	// CWMP TR-069 proxy (public - called by ONT devices)
 	cwmpHandler := handler.NewCWMPHandler(genieacsClient, tenantRepo, customerRepo, ontRepo, "http://127.0.0.1:17547")
-	app.All("/", cwmpHandler.Handle)
+	app.All("/cwmp", cwmpHandler.Handle)
 
 	// Payment gateway webhooks
 	webhooks := v1.Group("/webhooks")
@@ -661,6 +670,12 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	rewardClaims.Get("/", rewardHandler.ListClaims)
 	rewardClaims.Post("/:claimId/apply", middleware.PermissionGuard("rewards.edit"), rewardHandler.ApplyClaim)
 	rewardClaims.Get("/balance/:id", rewardHandler.GetCustomerBalance)
+
+	// Tenant management routes (superadmin — cross-tenant CRUD)
+	tenants := v1.Group("/tenants", authMiddleware.Handle(), middleware.RoleGuard("superadmin"))
+	tenants.Get("/", tenantHandler.List)
+	tenants.Post("/", tenantHandler.Create)
+	tenants.Get("/:id", tenantHandler.GetByID)
 
 	// SuperAdmin (Pengelola) routes — cross-tenant management
 	admin := v1.Group("/admin", authMiddleware.Handle(), middleware.RoleGuard("superadmin"))

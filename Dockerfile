@@ -9,6 +9,7 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app cmd/api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o migrate cmd/migrate/main.go
 
 # Runtime
 FROM alpine:3.21
@@ -19,7 +20,9 @@ RUN apk add --no-cache ca-certificates tzdata
 ENV TZ=Asia/Jakarta
 
 COPY --from=builder /build/app .
-COPY --from=builder /build/migrations ./migrations
+COPY --from=builder /build/migrate .
+COPY --from=builder /build/static ./static
+COPY --from=builder /build/docs/swagger.json ./docs/swagger.json
 
 EXPOSE 3000
 
