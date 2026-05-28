@@ -101,7 +101,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	userService := service.NewUserService(userRepo, roleRepo)
 	roleService := service.NewRoleService(roleRepo, userRepo)
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
-        snmpService := service.NewSNMPService(oltRepo, vpnMgr)
+	snmpService := service.NewSNMPService(oltRepo, vpnMgr)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, vpnMgr).WithSNMP(snmpService).
 		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret)
 	packageService := service.NewPackageService(packageRepo)
@@ -154,15 +154,15 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	packageHandler := handler.NewPackageHandler(packageService)
 	baseURL := deps.Config.App.URL
 	tenantHandler := handler.NewTenantHandler(tenantService).WithWebhookURLs(map[string]string{
-		"tripay":               baseURL + "/api/v1/webhooks/tripay",
-		"tripay_voucher":       baseURL + "/api/v1/webhooks/tripay/voucher",
-		"tripay_subscription":  baseURL + "/api/v1/webhooks/subscription/tripay",
-		"midtrans":             baseURL + "/api/v1/webhooks/midtrans",
-		"midtrans_voucher":     baseURL + "/api/v1/webhooks/midtrans/voucher",
+		"tripay":                baseURL + "/api/v1/webhooks/tripay",
+		"tripay_voucher":        baseURL + "/api/v1/webhooks/tripay/voucher",
+		"tripay_subscription":   baseURL + "/api/v1/webhooks/subscription/tripay",
+		"midtrans":              baseURL + "/api/v1/webhooks/midtrans",
+		"midtrans_voucher":      baseURL + "/api/v1/webhooks/midtrans/voucher",
 		"midtrans_subscription": baseURL + "/api/v1/webhooks/subscription/midtrans",
-		"xendit":               baseURL + "/api/v1/webhooks/xendit",
-		"xendit_voucher":       baseURL + "/api/v1/webhooks/xendit/voucher",
-		"xendit_subscription":  baseURL + "/api/v1/webhooks/subscription/xendit",
+		"xendit":                baseURL + "/api/v1/webhooks/xendit",
+		"xendit_voucher":        baseURL + "/api/v1/webhooks/xendit/voucher",
+		"xendit_subscription":   baseURL + "/api/v1/webhooks/subscription/xendit",
 	})
 	invoiceHandler := handler.NewInvoiceHandler(invoiceService)
 	ticketHandler := handler.NewTicketHandler(ticketService)
@@ -219,7 +219,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 
 	// API V1 Group
 	v1 := app.Group("/api/v1")
-        v1.Use("/ws", wsHandler.UpgradeCheck)
+	v1.Use("/ws", wsHandler.UpgradeCheck)
 	v1.Get("/ws", wsHandler.Handle())
 
 	// Public static files (for temporary WhatsApp uploads)
@@ -650,6 +650,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	dashboard := protected.Group("/dashboard", middleware.PermissionGuard("dashboard.view"))
 	dashboard.Get("/stats", dashboardHandler.GetStats)
 	dashboard.Get("/revenue", dashboardHandler.GetMonthlyRevenue)
+	dashboard.Get("/revenue/rolling", dashboardHandler.GetRollingRevenue)
 
 	// Reward / Referral routes
 	rewards := protected.Group("/rewards", middleware.PermissionGuard("rewards.view"))
@@ -683,5 +684,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	admin.Get("/tenants", adminHandler.GetTenantStats)
 	admin.Get("/routers", adminHandler.GetAllRouters)
 	admin.Get("/customers", adminHandler.GetTenantCustomerCounts)
+	admin.Get("/revenue/rolling", adminHandler.GetRollingRevenue)
+	admin.Get("/revenue/subscription", adminHandler.GetSubscriptionRevenue)
 
 }

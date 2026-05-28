@@ -29,3 +29,11 @@ func (s *AdminService) GetAllRouters(ctx context.Context, page, perPage int) ([]
 func (s *AdminService) GetTenantCustomerCounts(ctx context.Context) ([]repository.TenantStat, error) {
 	return s.adminRepo.GetTenantCustomerCounts(ctx)
 }
+
+func (s *AdminService) GetRollingRevenue(ctx context.Context) ([]repository.RollingMonthlyRevenue, error) {
+	return s.adminRepo.GetRollingRevenue(ctx)
+}
+
+func (s *AdminService) GetSubscriptionRevenue(ctx context.Context) ([]repository.RollingMonthlyRevenue, error) {
+	return s.adminRepo.GetSubscriptionRevenue(ctx)
+}

@@ -8,19 +8,19 @@ import (
 
 // SuperAdmin Dashboard Stats
 type AdminDashboardStats struct {
-	TotalTenants       int              `json:"total_tenants"`
-	ActiveTenants      int              `json:"active_tenants"`
-	FreePlanTenants    int              `json:"free_plan_tenants"`
-	ProPlanTenants     int              `json:"pro_plan_tenants"`
-	EnterpriseTenants  int              `json:"enterprise_tenants"`
-	TotalCustomers     int              `json:"total_customers"`
-	ActiveCustomers    int              `json:"active_customers"`
-	InactiveCustomers  int              `json:"inactive_customers"`
-	TotalRouters       int              `json:"total_routers"`
-	OnlineRouters      int              `json:"online_routers"`
-	TotalRevenue       int64            `json:"total_revenue"`
-	SubscriberCount    int              `json:"subscriber_count"`
-	TenantStats        []TenantStat     `json:"tenant_stats"`
+	TotalTenants      int          `json:"total_tenants"`
+	ActiveTenants     int          `json:"active_tenants"`
+	FreePlanTenants   int          `json:"free_plan_tenants"`
+	ProPlanTenants    int          `json:"pro_plan_tenants"`
+	EnterpriseTenants int          `json:"enterprise_tenants"`
+	TotalCustomers    int          `json:"total_customers"`
+	ActiveCustomers   int          `json:"active_customers"`
+	InactiveCustomers int          `json:"inactive_customers"`
+	TotalRouters      int          `json:"total_routers"`
+	OnlineRouters     int          `json:"online_routers"`
+	TotalRevenue      int64        `json:"total_revenue"`
+	SubscriberCount   int          `json:"subscriber_count"`
+	TenantStats       []TenantStat `json:"tenant_stats"`
 }
 
 type TenantStat struct {
@@ -37,12 +37,12 @@ type TenantStat struct {
 }
 
 type TenantRouterStat struct {
-	TenantID   string `json:"tenant_id"`
-	TenantName string `json:"tenant_name"`
-	RouterID   string `json:"router_id"`
-	RouterName string `json:"router_name"`
-	Host       string `json:"host"`
-	IsActive   bool   `json:"is_active"`
+	TenantID   string  `json:"tenant_id"`
+	TenantName string  `json:"tenant_name"`
+	RouterID   string  `json:"router_id"`
+	RouterName string  `json:"router_name"`
+	Host       string  `json:"host"`
+	IsActive   bool    `json:"is_active"`
 	LastSeen   *string `json:"last_seen,omitempty"`
 }
 
@@ -51,6 +51,8 @@ type AdminRepository interface {
 	GetTenantStats(ctx context.Context) ([]TenantStat, error)
 	GetAllRouters(ctx context.Context, page, perPage int) ([]TenantRouterStat, int, error)
 	GetTenantCustomerCounts(ctx context.Context) ([]TenantStat, error)
+	GetRollingRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error)
+	GetSubscriptionRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error)
 }
 
 type adminRepository struct {
@@ -202,4 +204,97 @@ func (r *adminRepository) GetAllRouters(ctx context.Context, page, perPage int) 
 
 func (r *adminRepository) GetTenantCustomerCounts(ctx context.Context) ([]TenantStat, error) {
 	return r.GetTenantStats(ctx)
+}
+
+func (r *adminRepository) GetRollingRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error) {
+	rows, err := r.db.Query(ctx, `
+		WITH months AS (
+			SELECT
+				EXTRACT(MONTH FROM d)::int AS m,
+				EXTRACT(YEAR FROM d)::int AS y,
+				TO_CHAR(d, 'Mon YYYY') AS month_label
+			FROM generate_series(
+				DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months',
+				DATE_TRUNC('month', CURRENT_DATE),
+				INTERVAL '1 month'
+			) AS d
+		)
+		SELECT m.month_label, m.m, m.y,
+		       COALESCE(i.revenue, 0) AS revenue,
+		       COALESCE(e.expenses, 0) AS expenses
+		FROM months m
+		LEFT JOIN (
+			SELECT period_month, period_year, SUM(paid_amount) AS revenue
+			FROM invoices
+			WHERE status = 'paid'
+			GROUP BY period_month, period_year
+		) i ON i.period_month = m.m AND i.period_year = m.y
+		LEFT JOIN (
+			SELECT EXTRACT(MONTH FROM expense_date)::int AS month,
+			       EXTRACT(YEAR FROM expense_date)::int AS year,
+			       SUM(amount) AS expenses
+			FROM expenses
+			GROUP BY 1, 2
+		) e ON e.month = m.m AND e.year = m.y
+		ORDER BY m.y, m.m
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []RollingMonthlyRevenue
+	for rows.Next() {
+		var mr RollingMonthlyRevenue
+		if err := rows.Scan(&mr.MonthLabel, &mr.Month, &mr.Year, &mr.Revenue, &mr.Expenses); err != nil {
+			return nil, err
+		}
+		result = append(result, mr)
+	}
+
+	return result, nil
+}
+
+func (r *adminRepository) GetSubscriptionRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error) {
+	rows, err := r.db.Query(ctx, `
+		WITH months AS (
+			SELECT
+				EXTRACT(MONTH FROM d)::int AS m,
+				EXTRACT(YEAR FROM d)::int AS y,
+				TO_CHAR(d, 'Mon YYYY') AS month_label
+			FROM generate_series(
+				DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months',
+				DATE_TRUNC('month', CURRENT_DATE),
+				INTERVAL '1 month'
+			) AS d
+		)
+		SELECT m.month_label, m.m, m.y,
+		       COALESCE(s.revenue, 0) AS revenue,
+		       0 AS expenses
+		FROM months m
+		LEFT JOIN (
+			SELECT EXTRACT(MONTH FROM paid_at)::int AS month,
+			       EXTRACT(YEAR FROM paid_at)::int AS year,
+			       SUM(amount) AS revenue
+			FROM subscription_orders
+			WHERE status = 'paid'
+			GROUP BY 1, 2
+		) s ON s.month = m.m AND s.year = m.y
+		ORDER BY m.y, m.m
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []RollingMonthlyRevenue
+	for rows.Next() {
+		var mr RollingMonthlyRevenue
+		if err := rows.Scan(&mr.MonthLabel, &mr.Month, &mr.Year, &mr.Revenue, &mr.Expenses); err != nil {
+			return nil, err
+		}
+		result = append(result, mr)
+	}
+
+	return result, nil
 }

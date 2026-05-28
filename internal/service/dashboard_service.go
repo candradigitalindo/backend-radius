@@ -21,3 +21,7 @@ func (s *DashboardService) GetStats(ctx context.Context, tenantID string, month,
 func (s *DashboardService) GetMonthlyRevenue(ctx context.Context, tenantID string, year int) ([]repository.MonthlyRevenue, error) {
 	return s.dashboardRepo.GetMonthlyRevenue(ctx, tenantID, year)
 }
+
+func (s *DashboardService) GetRollingMonthlyRevenue(ctx context.Context, tenantID string) ([]repository.RollingMonthlyRevenue, error) {
+	return s.dashboardRepo.GetRollingMonthlyRevenue(ctx, tenantID)
+}

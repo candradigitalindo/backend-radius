@@ -23,12 +23,21 @@ type DashboardStats struct {
 type DashboardRepository interface {
 	GetStats(ctx context.Context, tenantID string, periodMonth, periodYear int) (*DashboardStats, error)
 	GetMonthlyRevenue(ctx context.Context, tenantID string, year int) ([]MonthlyRevenue, error)
+	GetRollingMonthlyRevenue(ctx context.Context, tenantID string) ([]RollingMonthlyRevenue, error)
 }
 
 type MonthlyRevenue struct {
 	Month    int   `json:"month"`
 	Revenue  int64 `json:"revenue"`
 	Expenses int64 `json:"expenses"`
+}
+
+type RollingMonthlyRevenue struct {
+	MonthLabel string `json:"month_label"`
+	Month      int    `json:"month"`
+	Year       int    `json:"year"`
+	Revenue    int64  `json:"revenue"`
+	Expenses   int64  `json:"expenses"`
 }
 
 type dashboardRepository struct {
@@ -132,6 +141,57 @@ func (r *dashboardRepository) GetMonthlyRevenue(ctx context.Context, tenantID st
 	for rows.Next() {
 		var mr MonthlyRevenue
 		if err := rows.Scan(&mr.Month, &mr.Revenue, &mr.Expenses); err != nil {
+			return nil, err
+		}
+		result = append(result, mr)
+	}
+
+	return result, nil
+}
+
+func (r *dashboardRepository) GetRollingMonthlyRevenue(ctx context.Context, tenantID string) ([]RollingMonthlyRevenue, error) {
+	// Generate last 12 months starting from current month going back
+	rows, err := r.db.Query(ctx, `
+		WITH months AS (
+			SELECT
+				EXTRACT(MONTH FROM d)::int AS m,
+				EXTRACT(YEAR FROM d)::int AS y,
+				TO_CHAR(d, 'Mon YYYY') AS month_label
+			FROM generate_series(
+				DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months',
+				DATE_TRUNC('month', CURRENT_DATE),
+				INTERVAL '1 month'
+			) AS d
+		)
+		SELECT m.month_label, m.m, m.y,
+		       COALESCE(i.revenue, 0) AS revenue,
+		       COALESCE(e.expenses, 0) AS expenses
+		FROM months m
+		LEFT JOIN (
+			SELECT period_month, period_year, SUM(paid_amount) AS revenue
+			FROM invoices
+			WHERE tenant_id = $1 AND status = 'paid'
+			GROUP BY period_month, period_year
+		) i ON i.period_month = m.m AND i.period_year = m.y
+		LEFT JOIN (
+			SELECT EXTRACT(MONTH FROM expense_date)::int AS month,
+			       EXTRACT(YEAR FROM expense_date)::int AS year,
+			       SUM(amount) AS expenses
+			FROM expenses
+			WHERE tenant_id = $1
+			GROUP BY 1, 2
+		) e ON e.month = m.m AND e.year = m.y
+		ORDER BY m.y, m.m
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []RollingMonthlyRevenue
+	for rows.Next() {
+		var mr RollingMonthlyRevenue
+		if err := rows.Scan(&mr.MonthLabel, &mr.Month, &mr.Year, &mr.Revenue, &mr.Expenses); err != nil {
 			return nil, err
 		}
 		result = append(result, mr)

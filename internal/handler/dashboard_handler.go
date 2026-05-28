@@ -45,3 +45,14 @@ func (h *DashboardHandler) GetMonthlyRevenue(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"data": data, "year": year})
 }
+
+func (h *DashboardHandler) GetRollingRevenue(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	data, err := h.dashboardService.GetRollingMonthlyRevenue(c.Context(), tenantID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Kesalahan server internal"})
+	}
+
+	return c.JSON(fiber.Map{"data": data})
+}

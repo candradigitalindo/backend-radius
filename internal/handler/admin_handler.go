@@ -67,3 +67,21 @@ func (h *AdminHandler) GetTenantCustomerCounts(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{"data": stats})
 }
+
+// GetRollingRevenue returns rolling 6-month revenue across all tenants
+func (h *AdminHandler) GetRollingRevenue(c *fiber.Ctx) error {
+	data, err := h.adminService.GetRollingRevenue(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Kesalahan server internal"})
+	}
+	return c.JSON(fiber.Map{"data": data})
+}
+
+// GetSubscriptionRevenue returns rolling 6-month subscription revenue
+func (h *AdminHandler) GetSubscriptionRevenue(c *fiber.Ctx) error {
+	data, err := h.adminService.GetSubscriptionRevenue(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Kesalahan server internal"})
+	}
+	return c.JSON(fiber.Map{"data": data})
+}
