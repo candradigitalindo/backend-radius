@@ -18,6 +18,7 @@ const (
 	TaskONTDiscover       = "genieacs:ont_discover"
 	TaskONTAutoMatch      = "genieacs:ont_auto_match"
 	TaskExpireRewardClaims = "reward:expire_claims"
+	TaskSubExpiryCheck     = "subscription:expiry_check"
 )
 
 type GenerateInvoicesPayload struct {
@@ -115,3 +116,5 @@ func NewONTDiscoverTask() (*asynq.Task, error) {
 func NewONTAutoMatchTask() (*asynq.Task, error) {
 	return asynq.NewTask(TaskONTAutoMatch, nil), nil
 }
+
+type SubExpiryCheckPayload struct{}

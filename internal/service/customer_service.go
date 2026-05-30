@@ -24,6 +24,7 @@ var (
 	ErrPPPoEUsernameExists   = errors.New("Username PPPoE sudah ada")
 	ErrCustomerAlreadyActive = errors.New("Pelanggan sudah aktif")
 	ErrCustomerNotActive     = errors.New("Pelanggan tidak aktif")
+	ErrCustomerLimitReached  = errors.New("Batas jumlah pelanggan telah tercapai, upgrade paket untuk menambah lebih banyak pelanggan")
 )
 
 type customerInvoiceRepository interface {
@@ -162,6 +163,17 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 		}
 		if input.BillingType == "" {
 			input.BillingType = "fixed"
+		}
+	}
+
+	// Enforce max_customers limit from tenant subscription plan.
+	// max_customers == 0 means unlimited.
+	if s.tenantRepo != nil {
+		if tenant, err := s.tenantRepo.FindByID(ctx, input.TenantID); err == nil && tenant != nil && tenant.MaxCustomers > 0 {
+			current, err := s.customerRepo.CountActive(ctx, input.TenantID)
+			if err == nil && current >= tenant.MaxCustomers {
+				return nil, ErrCustomerLimitReached
+			}
 		}
 	}
 

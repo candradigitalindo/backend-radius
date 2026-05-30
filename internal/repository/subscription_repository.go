@@ -19,6 +19,9 @@ type SubscriptionRepository interface {
 	ListPlans(ctx context.Context, activeOnly bool) ([]model.SubscriptionPlan, error)
 	FindPlanByID(ctx context.Context, planID string) (*model.SubscriptionPlan, error)
 	FindPlanBySlug(ctx context.Context, slug string) (*model.SubscriptionPlan, error)
+	CreatePlan(ctx context.Context, plan *model.SubscriptionPlan) error
+	UpdatePlan(ctx context.Context, plan *model.SubscriptionPlan) error
+	DeletePlan(ctx context.Context, planID string) error
 
 	// Orders
 	CreateOrder(ctx context.Context, order *model.SubscriptionOrder) error
@@ -133,6 +136,55 @@ func (r *subscriptionRepository) FindPlanBySlug(ctx context.Context, slug string
 		p.Features = []string{}
 	}
 	return &p, nil
+}
+
+func (r *subscriptionRepository) CreatePlan(ctx context.Context, plan *model.SubscriptionPlan) error {
+	plan.ID = id.New()
+	now := time.Now()
+	plan.CreatedAt = now
+	plan.UpdatedAt = now
+
+	featuresJSON, err := json.Marshal(plan.Features)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO subscription_plans
+			(id, name, slug, description, price, duration_months, max_customers, max_routers,
+			 features, is_popular, is_active, sort_order, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		plan.ID, plan.Name, plan.Slug, plan.Description, plan.Price, plan.DurationMonths,
+		plan.MaxCustomers, plan.MaxRouters, featuresJSON, plan.IsPopular, plan.IsActive,
+		plan.SortOrder, plan.CreatedAt, plan.UpdatedAt,
+	)
+	return err
+}
+
+func (r *subscriptionRepository) UpdatePlan(ctx context.Context, plan *model.SubscriptionPlan) error {
+	plan.UpdatedAt = time.Now()
+
+	featuresJSON, err := json.Marshal(plan.Features)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.db.Exec(ctx, `
+		UPDATE subscription_plans SET
+			name=$1, slug=$2, description=$3, price=$4, duration_months=$5,
+			max_customers=$6, max_routers=$7, features=$8, is_popular=$9,
+			is_active=$10, sort_order=$11, updated_at=$12
+		WHERE id=$13`,
+		plan.Name, plan.Slug, plan.Description, plan.Price, plan.DurationMonths,
+		plan.MaxCustomers, plan.MaxRouters, featuresJSON, plan.IsPopular,
+		plan.IsActive, plan.SortOrder, plan.UpdatedAt, plan.ID,
+	)
+	return err
+}
+
+func (r *subscriptionRepository) DeletePlan(ctx context.Context, planID string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM subscription_plans WHERE id=$1`, planID)
+	return err
 }
 
 // --- Orders ---

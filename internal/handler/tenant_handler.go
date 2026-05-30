@@ -5,6 +5,7 @@ import (
 	"net/mail"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -43,6 +44,7 @@ type createTenantRequest struct {
 	DefaultBillingType  string `json:"default_billing_type"`
 	Plan                string `json:"plan"`
 	MaxCustomers        int    `json:"max_customers"`
+	Fingerprint         string `json:"fingerprint"`
 }
 
 type updateTenantRequest struct {
@@ -112,6 +114,8 @@ func (h *TenantHandler) Create(c *fiber.Ctx) error {
 		DefaultBillingType:  req.DefaultBillingType,
 		Plan:                req.Plan,
 		MaxCustomers:        req.MaxCustomers,
+		Fingerprint:         req.Fingerprint,
+		RegistrationIP:      c.IP(),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrSlugAlreadyUsed) {
@@ -243,15 +247,86 @@ func (h *TenantHandler) GetWebhookURLs(c *fiber.Ctx) error {
 	})
 }
 
+type adminUpdateTenantRequest struct {
+	Name          string  `json:"name"`
+	Email         string  `json:"email"`
+	Phone         string  `json:"phone"`
+	Address       string  `json:"address"`
+	IsActive      bool    `json:"is_active"`
+	Status        string  `json:"status"`
+	Plan          string  `json:"plan"`
+	PlanExpiresAt *string `json:"plan_expires_at"`
+	MaxCustomers  int     `json:"max_customers"`
+}
+
+func (h *TenantHandler) AdminUpdate(c *fiber.Ctx) error {
+	tenantID := c.Params("id")
+
+	var req adminUpdateTenantRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	if req.Name == "" || req.Email == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Nama dan email wajib diisi"})
+	}
+
+	// Paket "trial" hanya diberikan saat pembuatan tenant — tidak bisa di-assign ulang
+	if req.Plan == "trial" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Paket trial tidak dapat di-assign ulang. Pilih paket gratis atau paket berbayar."})
+	}
+
+	var planExpiresAt *time.Time
+	if req.PlanExpiresAt != nil && *req.PlanExpiresAt != "" {
+		t, err := time.Parse("2006-01-02", *req.PlanExpiresAt)
+		if err == nil {
+			planExpiresAt = &t
+		}
+	}
+
+	tenant, err := h.tenantService.AdminUpdate(c.Context(), tenantID, service.AdminUpdateTenantInput{
+		Name:          req.Name,
+		Email:         req.Email,
+		Phone:         req.Phone,
+		Address:       req.Address,
+		IsActive:      req.IsActive,
+		Status:        req.Status,
+		Plan:          req.Plan,
+		PlanExpiresAt: planExpiresAt,
+		MaxCustomers:  req.MaxCustomers,
+	})
+	if err != nil {
+		if errors.Is(err, service.ErrTenantNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui tenant"})
+	}
+
+	return c.JSON(fiber.Map{"data": tenant})
+}
+
+// POST /api/v1/tenants/:id/approve
+func (h *TenantHandler) Approve(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := h.tenantService.Approve(c.Context(), id); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyetujui tenant"})
+	}
+	return c.JSON(fiber.Map{"message": "Tenant berhasil disetujui"})
+}
+
 func (h *TenantHandler) List(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	perPage, _ := strconv.Atoi(c.Query("per_page", "20"))
 
+	// Hide the superadmin's own tenant from the list
+	excludeTenantID, _ := c.Locals("tenant_id").(string)
+
 	filter := repository.TenantFilter{
-		Search:  c.Query("search"),
-		Plan:    c.Query("plan"),
-		Page:    page,
-		PerPage: perPage,
+		Search:          c.Query("search"),
+		Plan:            c.Query("plan"),
+		ExcludeTenantID: excludeTenantID,
+		Page:            page,
+		PerPage:         perPage,
 	}
 
 	if activeStr := c.Query("active"); activeStr != "" {

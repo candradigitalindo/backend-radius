@@ -41,8 +41,6 @@ func (h *CWMPHandler) Handle(c *fiber.Ctx) error {
 
 	body := make([]byte, len(c.Body()))
 	copy(body, c.Body())
-	log.Printf("DEBUG CWMP BODY: %s", string(body))
-log.Printf("DEBUG CWMP BODY: %s", string(body))
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, h.cwmpUpstream+"/", bytes.NewReader(body))
 	if err != nil {

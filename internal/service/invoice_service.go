@@ -31,6 +31,7 @@ type InvoiceService struct {
 	customerRepo repository.CustomerRepository
 	reminderRepo repository.ReminderRepository
 	tenantRepo   repository.TenantRepository
+	settingRepo  repository.SettingRepository
 	rewardSvc    *RewardService
 	waClient     *whatsapp.Client
 	baseURL      string // Base URL for constructing callback URLs (e.g. https://api.example.com)
@@ -60,6 +61,12 @@ func (s *InvoiceService) WithReminderRepo(reminderRepo repository.ReminderReposi
 	return s
 }
 
+// WithSettingRepo sets the setting repo for reading per-tenant configuration.
+func (s *InvoiceService) WithSettingRepo(settingRepo repository.SettingRepository) *InvoiceService {
+	s.settingRepo = settingRepo
+	return s
+}
+
 // WithTenantRepo returns a new InvoiceService copy with the tenant repo set.
 // Used when payment gateway features need tenant PG credentials.
 func (s *InvoiceService) WithTenantRepo(tenantRepo repository.TenantRepository) *InvoiceService {
@@ -68,6 +75,7 @@ func (s *InvoiceService) WithTenantRepo(tenantRepo repository.TenantRepository) 
 		paymentRepo:  s.paymentRepo,
 		customerRepo: s.customerRepo,
 		reminderRepo: s.reminderRepo,
+		settingRepo:  s.settingRepo,
 		tenantRepo:   tenantRepo,
 		rewardSvc:    s.rewardSvc,
 		waClient:     s.waClient,
@@ -551,7 +559,8 @@ Terima kasih. 🙏`
 		return
 	}
 
-	result, err := s.waClient.SendReminders(ctx, tenantID, reminderItems)
+	waSession := WASessionForTenant(ctx, tenantID, s.settingRepo)
+	result, err := s.waClient.SendReminders(ctx, waSession, reminderItems)
 	if err != nil {
 		log.Printf("[invoice-wa] send failed: %v", err)
 		return
@@ -659,7 +668,8 @@ _Simpan pesan ini sebagai bukti pembayaran._`,
 		customer.CustomerCode,
 	)
 
-	result, err := s.waClient.SendMessage(ctx, tenantID, customer.Phone, msg)
+	waSession := WASessionForTenant(ctx, tenantID, s.settingRepo)
+	result, err := s.waClient.SendMessage(ctx, waSession, customer.Phone, msg)
 	if err != nil {
 		log.Printf("[payment-wa] send failed for %s: %v", customer.CustomerCode, err)
 		return

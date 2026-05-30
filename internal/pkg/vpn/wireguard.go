@@ -75,8 +75,6 @@ func (m *Manager) RestorePeers(peers []struct{ PublicKey, VPNIP string }) {
 	for _, p := range peers {
 		if err := m.AddPeer(p.PublicKey, p.VPNIP); err != nil {
 			log.Printf("[VPN] Failed to restore peer %s (%s): %v", p.VPNIP, p.PublicKey[:8]+"...", err)
-		} else {
-			log.Printf("[VPN] Restored peer %s", p.VPNIP)
 		}
 	}
 	log.Printf("[VPN] Peer restore complete: %d peers processed", len(peers))

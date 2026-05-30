@@ -23,14 +23,21 @@ type TenantRepository interface {
 	UpdatePlan(ctx context.Context, tenant *model.Tenant) error
 	// ListActive returns all active tenants. Used by background workers.
 	ListActive(ctx context.Context) ([]model.Tenant, error)
+	// ListExpiringSoon returns tenants whose plan expires within maxDays days (including already-expired up to 3 days).
+	ListExpiringSoon(ctx context.Context, maxDays int) ([]model.Tenant, error)
+	// Anti-cheating checks
+	CountByFingerprint(ctx context.Context, fingerprint string) (int, error)
+	CountByIP(ctx context.Context, ip string) (int, error)
+	Approve(ctx context.Context, tenantID string) error
 }
 
 type TenantFilter struct {
-	Search  string
-	Plan    string
-	Active  *bool
-	Page    int
-	PerPage int
+	Search          string
+	Plan            string
+	Active          *bool
+	ExcludeTenantID string
+	Page            int
+	PerPage         int
 }
 
 type tenantRepository struct {
@@ -46,13 +53,17 @@ func (r *tenantRepository) Create(ctx context.Context, tenant *model.Tenant) err
 	now := time.Now()
 	tenant.CreatedAt = now
 	tenant.UpdatedAt = now
+	if tenant.Status == "" {
+		tenant.Status = "active"
+	}
 
 	query := `
 		INSERT INTO tenants (
 			id, name, slug, email, phone, address, logo_url,
 			timezone, currency, billing_cycle, due_day, isolir_day, grace_period, default_billing_type,
-			plan, plan_expires_at, max_customers, is_active, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+			plan, plan_expires_at, max_customers, is_active, status, fingerprint, registration_ip, risk_score, risk_reasons,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
 	`
 
 	_, err := r.db.Exec(ctx, query,
@@ -61,7 +72,8 @@ func (r *tenantRepository) Create(ctx context.Context, tenant *model.Tenant) err
 		tenant.Timezone, tenant.Currency, tenant.BillingCycle,
 		tenant.DueDay, tenant.IsolirDay, tenant.GracePeriod, tenant.DefaultBillingType,
 		tenant.Plan, tenant.PlanExpiresAt, tenant.MaxCustomers,
-		tenant.IsActive, tenant.CreatedAt, tenant.UpdatedAt,
+		tenant.IsActive, tenant.Status, tenant.Fingerprint, tenant.RegistrationIP, tenant.RiskScore, tenant.RiskReasons,
+		tenant.CreatedAt, tenant.UpdatedAt,
 	)
 	return err
 }
@@ -73,7 +85,9 @@ func (r *tenantRepository) FindByID(ctx context.Context, tenantID string) (*mode
 		       plan, plan_expires_at, max_customers,
 		       COALESCE(wa_api_key,''), COALESCE(wa_sender,''), COALESCE(pg_provider,''), COALESCE(pg_api_key,''), COALESCE(pg_secret_key,''), COALESCE(pg_merchant_id,''),
 		       COALESCE(pg_sandbox, true),
-		       is_active, created_at, updated_at
+		       is_active, COALESCE(status, 'active'), COALESCE(fingerprint, ''), COALESCE(registration_ip, ''),
+		       risk_score, COALESCE(risk_reasons, ''),
+		       created_at, updated_at
 		FROM tenants
 		WHERE id = $1
 		LIMIT 1
@@ -86,7 +100,8 @@ func (r *tenantRepository) FindByID(ctx context.Context, tenantID string) (*mode
 		&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
 		&t.WAAPIKey, &t.WASender, &t.PGProvider, &t.PGAPIKey, &t.PGSecretKey, &t.PGMerchantID,
 		&t.PGSandbox,
-		&t.IsActive, &t.CreatedAt, &t.UpdatedAt,
+		&t.IsActive, &t.Status, &t.Fingerprint, &t.RegistrationIP, &t.RiskScore, &t.RiskReasons,
+		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -101,7 +116,7 @@ func (r *tenantRepository) FindBySlug(ctx context.Context, slug string) (*model.
 	query := `
 		SELECT id, name, slug, email, COALESCE(phone,''), COALESCE(address,''), COALESCE(logo_url,''),
 		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period, COALESCE(default_billing_type,'fixed'),
-		       plan, plan_expires_at, max_customers, is_active, created_at, updated_at
+		       plan, plan_expires_at, max_customers, is_active, COALESCE(status, 'active'), created_at, updated_at
 		FROM tenants
 		WHERE slug = $1
 		LIMIT 1
@@ -112,7 +127,7 @@ func (r *tenantRepository) FindBySlug(ctx context.Context, slug string) (*model.
 		&t.ID, &t.Name, &t.Slug, &t.Email, &t.Phone, &t.Address, &t.LogoURL,
 		&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod, &t.DefaultBillingType,
 		&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
-		&t.IsActive, &t.CreatedAt, &t.UpdatedAt,
+		&t.IsActive, &t.Status, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -132,8 +147,8 @@ func (r *tenantRepository) Update(ctx context.Context, tenant *model.Tenant) err
 			timezone = $6, currency = $7, billing_cycle = $8,
 			due_day = $9, isolir_day = $10, grace_period = $11,
 			default_billing_type = $12,
-			is_active = $13, updated_at = $14
-		WHERE id = $15
+			is_active = $13, status = $14, updated_at = $15
+		WHERE id = $16
 	`
 
 	_, err := r.db.Exec(ctx, query,
@@ -141,7 +156,7 @@ func (r *tenantRepository) Update(ctx context.Context, tenant *model.Tenant) err
 		tenant.Timezone, tenant.Currency, tenant.BillingCycle,
 		tenant.DueDay, tenant.IsolirDay, tenant.GracePeriod,
 		tenant.DefaultBillingType,
-		tenant.IsActive, tenant.UpdatedAt,
+		tenant.IsActive, tenant.Status, tenant.UpdatedAt,
 		tenant.ID,
 	)
 	return err
@@ -175,7 +190,7 @@ func (r *tenantRepository) List(ctx context.Context, filter TenantFilter) ([]mod
 	argIdx := 1
 
 	if filter.Search != "" {
-		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d OR email ILIKE $%d)", argIdx, argIdx, argIdx))
+		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d OR email ILIKE $%d OR phone ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
 		args = append(args, "%"+filter.Search+"%")
 		argIdx++
 	}
@@ -189,6 +204,12 @@ func (r *tenantRepository) List(ctx context.Context, filter TenantFilter) ([]mod
 	if filter.Active != nil {
 		conditions = append(conditions, fmt.Sprintf("is_active = $%d", argIdx))
 		args = append(args, *filter.Active)
+		argIdx++
+	}
+
+	if filter.ExcludeTenantID != "" {
+		conditions = append(conditions, fmt.Sprintf("id != $%d", argIdx))
+		args = append(args, filter.ExcludeTenantID)
 		argIdx++
 	}
 
@@ -213,7 +234,7 @@ func (r *tenantRepository) List(ctx context.Context, filter TenantFilter) ([]mod
 	dataQuery := fmt.Sprintf(`
 		SELECT id, name, slug, email, COALESCE(phone,''), COALESCE(address,''), COALESCE(logo_url,''),
 		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period, COALESCE(default_billing_type,'fixed'),
-		       plan, plan_expires_at, max_customers, is_active, created_at, updated_at
+		       plan, plan_expires_at, max_customers, is_active, COALESCE(status, 'active'), risk_score, created_at, updated_at
 		FROM tenants
 		%s
 		ORDER BY created_at DESC
@@ -235,7 +256,7 @@ func (r *tenantRepository) List(ctx context.Context, filter TenantFilter) ([]mod
 			&t.ID, &t.Name, &t.Slug, &t.Email, &t.Phone, &t.Address, &t.LogoURL,
 			&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod, &t.DefaultBillingType,
 			&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
-			&t.IsActive, &t.CreatedAt, &t.UpdatedAt,
+			&t.IsActive, &t.Status, &t.RiskScore, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -276,4 +297,66 @@ func (r *tenantRepository) ListActive(ctx context.Context) ([]model.Tenant, erro
 		tenants = append(tenants, t)
 	}
 	return tenants, nil
+}
+
+func (r *tenantRepository) ListExpiringSoon(ctx context.Context, maxDays int) ([]model.Tenant, error) {
+	query := `
+		SELECT id, name, slug, email, COALESCE(phone,''), COALESCE(address,''), COALESCE(logo_url,''),
+		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period, COALESCE(default_billing_type,'fixed'),
+		       plan, plan_expires_at, max_customers,
+		       COALESCE(wa_api_key,''), COALESCE(wa_sender,''), COALESCE(pg_provider,''), COALESCE(pg_api_key,''), COALESCE(pg_secret_key,''), COALESCE(pg_merchant_id,''),
+		       COALESCE(pg_sandbox, true),
+		       is_active, COALESCE(status, 'active'), created_at, updated_at
+		FROM tenants
+		WHERE plan_expires_at IS NOT NULL
+		  AND plan NOT IN ('gratis', 'free', 'trial', '')
+		  AND is_active = TRUE
+		  AND plan_expires_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '8 days'
+		ORDER BY plan_expires_at ASC
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tenants []model.Tenant
+	for rows.Next() {
+		var t model.Tenant
+		if err := rows.Scan(
+			&t.ID, &t.Name, &t.Slug, &t.Email, &t.Phone, &t.Address, &t.LogoURL,
+			&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay,
+			&t.GracePeriod, &t.DefaultBillingType,
+			&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
+			&t.WAAPIKey, &t.WASender, &t.PGProvider, &t.PGAPIKey, &t.PGSecretKey, &t.PGMerchantID,
+			&t.PGSandbox,
+			&t.IsActive, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		tenants = append(tenants, t)
+	}
+	return tenants, nil
+}
+
+func (r *tenantRepository) CountByFingerprint(ctx context.Context, fingerprint string) (int, error) {
+	if fingerprint == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM tenants WHERE fingerprint = $1", fingerprint).Scan(&count)
+	return count, err
+}
+
+func (r *tenantRepository) CountByIP(ctx context.Context, ip string) (int, error) {
+	if ip == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM tenants WHERE registration_ip = $1", ip).Scan(&count)
+	return count, err
+}
+
+func (r *tenantRepository) Approve(ctx context.Context, tenantID string) error {
+	_, err := r.db.Exec(ctx, "UPDATE tenants SET status = 'active', is_active = true, updated_at = NOW() WHERE id = $1", tenantID)
+	return err
 }

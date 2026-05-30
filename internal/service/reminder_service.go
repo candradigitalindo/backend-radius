@@ -22,6 +22,7 @@ type ReminderService struct {
 	invoiceRepo  repository.InvoiceRepository
 	customerRepo repository.CustomerRepository
 	tenantRepo   repository.TenantRepository
+	settingRepo  repository.SettingRepository
 	waClient     *whatsapp.Client
 }
 
@@ -39,6 +40,11 @@ func NewReminderService(
 		tenantRepo:   tenantRepo,
 		waClient:     waClient,
 	}
+}
+
+func (s *ReminderService) WithSettingRepo(repo repository.SettingRepository) *ReminderService {
+	s.settingRepo = repo
+	return s
 }
 
 type CreateReminderInput struct {
@@ -208,14 +214,15 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 		}
 
 		// Send via WhatsApp service (async)
-		go func(items []whatsapp.ReminderItem, reminderName string) {
-			waResult, err := s.waClient.SendReminders(context.Background(), tenantID, items)
+		waSession := WASessionForTenant(ctx, tenantID, s.settingRepo)
+		go func(items []whatsapp.ReminderItem, reminderName, session string) {
+			waResult, err := s.waClient.SendReminders(context.Background(), session, items)
 			if err != nil {
 				log.Printf("[reminder] WA send failed for reminder %q: %v", reminderName, err)
 				return
 			}
 			log.Printf("[reminder] %q: sent=%d, failed=%d", reminderName, waResult.Success, waResult.Failed)
-		}(reminderItems, reminder.Name)
+		}(reminderItems, reminder.Name, waSession)
 
 		result.TotalSent += len(reminderItems)
 	}

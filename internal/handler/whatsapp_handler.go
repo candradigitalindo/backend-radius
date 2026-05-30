@@ -169,35 +169,6 @@ func (h *WhatsAppHandler) SendMessage(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
-// GetConfig returns the WhatsApp configuration for the current tenant.
-func (h *WhatsAppHandler) GetConfig(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-
-	cfg, err := h.repo.GetConfig(c.Context(), tenantID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	return c.JSON(fiber.Map{"data": cfg})
-}
-
-// UpdateConfig updates the WhatsApp configuration for the current tenant.
-func (h *WhatsAppHandler) UpdateConfig(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-
-	var cfg repository.WhatsAppConfig
-	if err := c.BodyParser(&cfg); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
-	}
-	cfg.TenantID = tenantID
-
-	if err := h.repo.UpsertConfig(c.Context(), &cfg); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	return c.JSON(fiber.Map{"message": "Configuration saved"})
-}
-
 // GetLogs returns the WhatsApp message logs for the current tenant.
 func (h *WhatsAppHandler) GetLogs(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)

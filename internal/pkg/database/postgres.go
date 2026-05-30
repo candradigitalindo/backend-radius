@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,6 +28,5 @@ func Connect(cfg *config.Config) *pgxpool.Pool {
 		log.Fatalf("Unable to ping database: %v", err)
 	}
 
-	fmt.Println("Database connected")
 	return pool
 }

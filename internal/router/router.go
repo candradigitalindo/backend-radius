@@ -97,7 +97,8 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	waClient := whatsapp.NewClient(deps.Config.WhatsApp)
 
 	// Services
-	authService := service.NewAuthService(userRepo, customerRepo, tenantRepo, roleRepo, tokenManager)
+	tenantService := service.NewTenantService(tenantRepo, userRepo, roleRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL).WithReminderRepo(reminderRepo)
+	authService := service.NewAuthService(userRepo, customerRepo, tenantRepo, roleRepo, tokenManager, deps.Redis).WithTenantService(tenantService).WithSubscriptionRepo(subscriptionRepo).WithReminderRepo(reminderRepo)
 	userService := service.NewUserService(userRepo, roleRepo)
 	roleService := service.NewRoleService(roleRepo, userRepo)
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
@@ -105,8 +106,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	routerService := service.NewRouterService(routerRepo, sessionRepo, vpnMgr).WithSNMP(snmpService).
 		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret)
 	packageService := service.NewPackageService(packageRepo)
-	tenantService := service.NewTenantService(tenantRepo)
-	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL)
+	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL).WithSettingRepo(settingRepo)
 	ticketService := service.NewTicketService(ticketRepo)
 	mobileService := service.NewMobileService(customerRepo, invoiceRepo, ticketRepo, packageRepo, tokenManager)
 	voucherService := service.NewVoucherService(voucherProductRepo, voucherRepo, voucherPaymentRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL)
@@ -120,7 +120,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	odpService := service.NewODPService(odpRepo, customerRepo, ontRepo)
 	ontService := service.NewONTService(ontRepo).WithCustomerLog(customerLogRepo)
 	ftthService := service.NewFTTHService(ftthRepo)
-	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient)
+	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo)
 	reportService := service.NewReportService(reportRepo)
 	exportService := service.NewExportService(reportRepo)
 	bandwidthService := service.NewBandwidthService(bandwidthRepo)
@@ -128,8 +128,8 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	ipamService := service.NewIPAMService(ipamRepo)
 	resellerService := service.NewResellerService(resellerRepo)
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
-	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&deps.Config.PG, deps.Config.App.URL)
-	adminService := service.NewAdminService(adminRepo)
+	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&deps.Config.PG, deps.Config.App.URL).WithReminderRepo(reminderRepo).WithWAClient(waClient)
+	adminService := service.NewAdminService(adminRepo).WithTenantService(tenantService)
 
 	// GenieACS TR-069 client & service
 	genieacsClient := genieacs.NewClient(deps.Config.GenieACS)
@@ -147,6 +147,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Handlers
 	authHandler := handler.NewAuthHandler(authService)
 	authHandler.WithResetDeps(userRepo, tenantRepo, deps.Redis, waClient)
+	authHandler.WithReminderRepo(reminderRepo)
 	userHandler := handler.NewUserHandler(userService)
 	roleHandler := handler.NewRoleHandler(roleService)
 	customerHandler := handler.NewCustomerHandler(customerService)
@@ -198,7 +199,8 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	waHandler := handler.NewWhatsAppHandler(waClient, waRepo).WithBaseURL(deps.Config.App.URL)
 	waTemplateHandler := handler.NewWATemplateHandler(waTemplateRepo)
 	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo)
-	adminHandler := handler.NewAdminHandler(adminService)
+	adminHandler := handler.NewAdminHandler(adminService).WithSubscriptionService(subscriptionService).WithReminderRepo(reminderRepo)
+	saSettingsHandler := handler.NewSASettingsHandler(tenantService, settingService, waClient)
 	wsHandler := handler.NewWSHandler(dashboardService, bandwidthService, routerService, deps.Config.JWT.PublicKeyPath)
 	i18nHandler := handler.NewI18nHandler()
 	_ = userHandler
@@ -236,7 +238,10 @@ func Setup(app *fiber.App, deps *Dependencies) {
 
 	// Auth routes (public)
 	auth := v1.Group("/auth")
+	auth.Post("/register/send-otp", publicLimiter, authHandler.SendRegistrationOTP)
 	auth.Post("/register", publicLimiter, authHandler.Register)
+	auth.Get("/plans", publicLimiter, authHandler.ListPlans)
+	auth.Post("/select-plan", authMiddleware.Handle(), authHandler.SelectPlan)
 	auth.Post("/login", publicLimiter, authHandler.Login)
 	auth.Post("/refresh", publicLimiter, authHandler.RefreshToken)
 	auth.Post("/reset-pin", publicLimiter, authHandler.RequestResetPIN)
@@ -282,6 +287,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Public portal login
 	portalHandler := handler.NewPortalHandler(customerRepo, invoiceRepo, ticketRepo, paymentRepo, tenantRepo, tokenManager)
 	portalHandler.WithResetDeps(deps.Redis, waClient)
+	portalHandler.WithReminderRepo(reminderRepo)
 	publicPortal := v1.Group("/public/portal")
 	publicPortal.Get("/:slug", publicLimiter, portalHandler.GetTenantInfo)
 	publicPortal.Post("/:slug/login", publicLimiter, portalHandler.PortalLogin)
@@ -325,7 +331,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	portal.Put("/change-password", portalHandler.ChangePassword)
 
 	// Protected routes (staff only)
-	protected := v1.Group("/", authMiddleware.Handle(), middleware.TenantGuard(), middleware.StaffGuard(), middleware.NewPermissionLoader(roleRepo))
+	protected := v1.Group("/", authMiddleware.Handle(), middleware.TenantGuard(), middleware.StaffGuard(), middleware.NewPermissionLoader(roleRepo), middleware.SubscriptionGuard(tenantRepo))
 
 	// Current tenant routes
 	protected.Get("/tenant", tenantHandler.GetCurrent)
@@ -343,6 +349,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	subscription.Get("/orders/:id", subscriptionHandler.GetOrder)
 	subscription.Post("/orders/:id/pay", subscriptionHandler.CreatePayment)
 	subscription.Post("/orders/:id/confirm", middleware.RoleGuard("superadmin"), subscriptionHandler.ConfirmPayment)
+	subscription.Get("/status", subscriptionHandler.GetStatus)
 
 	// User routes
 	users := protected.Group("/users", middleware.PermissionGuard("users.view"))
@@ -593,8 +600,6 @@ func Setup(app *fiber.App, deps *Dependencies) {
 
 	// WhatsApp routes
 	wa := protected.Group("/whatsapp", middleware.PermissionGuard("whatsapp.view"))
-	wa.Get("/config", waHandler.GetConfig)
-	wa.Put("/config", middleware.PermissionGuard("whatsapp.configure"), waHandler.UpdateConfig)
 	wa.Get("/logs", waHandler.GetLogs)
 	wa.Post("/sessions/start", middleware.PermissionGuard("whatsapp.configure"), waHandler.StartSession)
 	wa.Get("/sessions/status", waHandler.GetStatus)
@@ -677,6 +682,9 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	tenants.Get("/", tenantHandler.List)
 	tenants.Post("/", tenantHandler.Create)
 	tenants.Get("/:id", tenantHandler.GetByID)
+	tenants.Put("/:id", tenantHandler.AdminUpdate)
+	tenants.Post("/:id/approve", tenantHandler.Approve)
+	tenants.Post("/:id/reset-password", adminHandler.ResetTenantPassword)
 
 	// SuperAdmin (Pengelola) routes — cross-tenant management
 	admin := v1.Group("/admin", authMiddleware.Handle(), middleware.RoleGuard("superadmin"))
@@ -686,5 +694,26 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	admin.Get("/customers", adminHandler.GetTenantCustomerCounts)
 	admin.Get("/revenue/rolling", adminHandler.GetRollingRevenue)
 	admin.Get("/revenue/subscription", adminHandler.GetSubscriptionRevenue)
+
+	// SuperAdmin Settings routes
+	admin.Get("/settings", saSettingsHandler.GetSettings)
+	admin.Put("/settings", saSettingsHandler.UpdateSettings)
+	admin.Post("/settings/test-pg", saSettingsHandler.TestPGConnection)
+
+	// SuperAdmin WhatsApp session routes (dedicated, uses "superadmin" as session ID)
+	admin.Post("/wa/start", saSettingsHandler.StartWASession)
+	admin.Get("/wa/status", saSettingsHandler.GetWASessionStatus)
+	admin.Get("/wa/qr", saSettingsHandler.GetWAQR)
+	admin.Delete("/wa/stop", saSettingsHandler.StopWASession)
+
+	// SuperAdmin Subscription Plan management
+	admin.Get("/subscription/plans", adminHandler.ListSubscriptionPlans)
+	admin.Post("/subscription/plans", adminHandler.CreateSubscriptionPlan)
+	admin.Put("/subscription/plans/:id", adminHandler.UpdateSubscriptionPlan)
+	admin.Delete("/subscription/plans/:id", adminHandler.DeleteSubscriptionPlan)
+
+	// SuperAdmin Subscription Reminder templates
+	admin.Get("/subscription/reminders", adminHandler.ListSubscriptionReminders)
+	admin.Put("/subscription/reminders/:id", adminHandler.UpdateSubscriptionReminder)
 
 }

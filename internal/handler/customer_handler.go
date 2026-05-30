@@ -331,6 +331,8 @@ func (h *CustomerHandler) handleError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, service.ErrCustomerCodeExists),
 		errors.Is(err, service.ErrPPPoEUsernameExists):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, service.ErrCustomerLimitReached):
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 	default:
 		log.Printf("[CustomerHandler] unhandled error: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Kesalahan server internal"})

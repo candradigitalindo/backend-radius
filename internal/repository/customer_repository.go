@@ -31,6 +31,7 @@ type CustomerRepository interface {
 	SetIsolated(ctx context.Context, tenantID, customerID string, isolatedAt *time.Time) error
 	CountByCodePrefix(ctx context.Context, tenantID, prefix string) (int, error)
 	CountByPPPoEPrefix(ctx context.Context, tenantID, prefix string) (int, error)
+	CountActive(ctx context.Context, tenantID string) (int, error)
 	UpdateODPPortID(ctx context.Context, customerID string, odpPortID *string) error
 	ClearODPPortID(ctx context.Context, odpPortID string) error
 	UpdatePasswordHash(ctx context.Context, tenantID, customerID, hash string) error
@@ -444,6 +445,15 @@ func (r *customerRepository) CountByPPPoEPrefix(ctx context.Context, tenantID, p
 	err := r.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM customers WHERE tenant_id = $1 AND pppoe_username LIKE $2`,
 		tenantID, prefix+"%",
+	).Scan(&count)
+	return count, err
+}
+
+func (r *customerRepository) CountActive(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM customers WHERE tenant_id = $1 AND status != 'deleted'`,
+		tenantID,
 	).Scan(&count)
 	return count, err
 }

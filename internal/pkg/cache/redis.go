@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"github.com/redis/go-redis/v9"
@@ -21,6 +20,5 @@ func Connect(cfg *config.Config) *redis.Client {
 		log.Fatalf("Unable to connect to Redis: %v", err)
 	}
 
-	fmt.Println("Redis connected")
 	return client
 }

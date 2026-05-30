@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -47,10 +48,10 @@ type TenantRouterStat struct {
 }
 
 type AdminRepository interface {
-	GetDashboardStats(ctx context.Context) (*AdminDashboardStats, error)
-	GetTenantStats(ctx context.Context) ([]TenantStat, error)
-	GetAllRouters(ctx context.Context, page, perPage int) ([]TenantRouterStat, int, error)
-	GetTenantCustomerCounts(ctx context.Context) ([]TenantStat, error)
+	GetDashboardStats(ctx context.Context, excludeTenantID string) (*AdminDashboardStats, error)
+	GetTenantStats(ctx context.Context, excludeTenantID string) ([]TenantStat, error)
+	GetAllRouters(ctx context.Context, excludeTenantID string, page, perPage int) ([]TenantRouterStat, int, error)
+	GetTenantCustomerCounts(ctx context.Context, excludeTenantID string) ([]TenantStat, error)
 	GetRollingRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error)
 	GetSubscriptionRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error)
 }
@@ -63,8 +64,15 @@ func NewAdminRepository(db *pgxpool.Pool) AdminRepository {
 	return &adminRepository{db: db}
 }
 
-func (r *adminRepository) GetDashboardStats(ctx context.Context) (*AdminDashboardStats, error) {
+func (r *adminRepository) GetDashboardStats(ctx context.Context, excludeTenantID string) (*AdminDashboardStats, error) {
 	var s AdminDashboardStats
+
+	excludeClause := ""
+	args := []interface{}{}
+	if excludeTenantID != "" {
+		excludeClause = "WHERE id != $1"
+		args = append(args, excludeTenantID)
+	}
 
 	// Tenant counts
 	err := r.db.QueryRow(ctx, `
@@ -75,7 +83,7 @@ func (r *adminRepository) GetDashboardStats(ctx context.Context) (*AdminDashboar
 			COUNT(*) FILTER (WHERE plan = 'pro'),
 			COUNT(*) FILTER (WHERE plan = 'enterprise')
 		FROM tenants
-	`).Scan(&s.TotalTenants, &s.ActiveTenants, &s.FreePlanTenants, &s.ProPlanTenants, &s.EnterpriseTenants)
+		`+excludeClause, args...).Scan(&s.TotalTenants, &s.ActiveTenants, &s.FreePlanTenants, &s.ProPlanTenants, &s.EnterpriseTenants)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +131,7 @@ func (r *adminRepository) GetDashboardStats(ctx context.Context) (*AdminDashboar
 	}
 
 	// Per-tenant stats
-	s.TenantStats, err = r.GetTenantStats(ctx)
+	s.TenantStats, err = r.GetTenantStats(ctx, excludeTenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +139,14 @@ func (r *adminRepository) GetDashboardStats(ctx context.Context) (*AdminDashboar
 	return &s, nil
 }
 
-func (r *adminRepository) GetTenantStats(ctx context.Context) ([]TenantStat, error) {
+func (r *adminRepository) GetTenantStats(ctx context.Context, excludeTenantID string) ([]TenantStat, error) {
+	excludeClause := ""
+	args := []interface{}{}
+	if excludeTenantID != "" {
+		excludeClause = "WHERE t.id != $1"
+		args = append(args, excludeTenantID)
+	}
+
 	rows, err := r.db.Query(ctx, `
 		SELECT
 			t.id, t.name, t.slug, COALESCE(t.plan, 'free'), t.is_active,
@@ -150,8 +165,9 @@ func (r *adminRepository) GetTenantStats(ctx context.Context) ([]TenantStat, err
 				COUNT(*) FILTER (WHERE is_active = true) as online_routers
 			FROM routers GROUP BY tenant_id
 		) r ON r.tenant_id = t.id
+		`+excludeClause+`
 		ORDER BY t.created_at DESC
-	`)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -170,21 +186,30 @@ func (r *adminRepository) GetTenantStats(ctx context.Context) ([]TenantStat, err
 	return result, nil
 }
 
-func (r *adminRepository) GetAllRouters(ctx context.Context, page, perPage int) ([]TenantRouterStat, int, error) {
+func (r *adminRepository) GetAllRouters(ctx context.Context, excludeTenantID string, page, perPage int) ([]TenantRouterStat, int, error) {
+	excludeClause := ""
+	countArgs := []interface{}{}
+	if excludeTenantID != "" {
+		excludeClause = "WHERE r.tenant_id != $1"
+		countArgs = append(countArgs, excludeTenantID)
+	}
+
 	var total int
-	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM routers`).Scan(&total)
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM routers r `+excludeClause, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	offset := (page - 1) * perPage
+	queryArgs := append(countArgs, perPage, offset)
 	rows, err := r.db.Query(ctx, `
 		SELECT t.id, t.name, r.id, r.name, r.host, r.is_active, r.updated_at::text
 		FROM routers r
 		JOIN tenants t ON t.id = r.tenant_id
+		`+excludeClause+`
 		ORDER BY r.updated_at DESC
-		LIMIT $1 OFFSET $2
-	`, perPage, offset)
+		LIMIT $`+strconv.Itoa(len(countArgs)+1)+` OFFSET $`+strconv.Itoa(len(countArgs)+2),
+		queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -202,8 +227,8 @@ func (r *adminRepository) GetAllRouters(ctx context.Context, page, perPage int) 
 	return result, total, nil
 }
 
-func (r *adminRepository) GetTenantCustomerCounts(ctx context.Context) ([]TenantStat, error) {
-	return r.GetTenantStats(ctx)
+func (r *adminRepository) GetTenantCustomerCounts(ctx context.Context, excludeTenantID string) ([]TenantStat, error) {
+	return r.GetTenantStats(ctx, excludeTenantID)
 }
 
 func (r *adminRepository) GetRollingRevenue(ctx context.Context) ([]RollingMonthlyRevenue, error) {

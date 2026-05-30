@@ -27,6 +27,7 @@ type PortalHandler struct {
 	ticketRepo   repository.TicketRepository
 	paymentRepo  repository.PaymentRepository
 	tenantRepo   repository.TenantRepository
+	reminderRepo repository.ReminderRepository
 	tokenManager *token.Manager
 	redis        *redis.Client
 	waClient     *whatsapp.Client
@@ -55,6 +56,40 @@ func (h *PortalHandler) WithResetDeps(rdb *redis.Client, wa *whatsapp.Client) *P
 	h.redis = rdb
 	h.waClient = wa
 	return h
+}
+
+func (h *PortalHandler) WithReminderRepo(repo repository.ReminderRepository) *PortalHandler {
+	h.reminderRepo = repo
+	return h
+}
+
+// otpTemplate returns the OTP WA message template from superadmin tenant reminders.
+func (h *PortalHandler) otpTemplate(ctx context.Context) string {
+	defaultTpl := "🔐 *Kode OTP Reset Password - D Radius*\n\n" +
+		"Halo *{nama}*,\n\n" +
+		"Kami menerima permintaan reset password untuk akun pelanggan *{nama_isp}* Anda.\n\n" +
+		"🔑 *Kode OTP Anda:*\n" +
+		"┌─────────────┐\n" +
+		"│  *{kode_otp}*  │\n" +
+		"└─────────────┘\n\n" +
+		"⏱ Berlaku selama *{durasi}*\n" +
+		"⚠️ Jangan bagikan kode ini kepada siapapun\n\n" +
+		"Jika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\n" +
+		"Terima kasih,\n" +
+		"_Tim D Radius_"
+
+	if h.reminderRepo == nil || h.tenantRepo == nil {
+		return defaultTpl
+	}
+	saT, err := h.tenantRepo.FindBySlug(ctx, "superadmin")
+	if err != nil || saT == nil {
+		return defaultTpl
+	}
+	rem, err := h.reminderRepo.FindActiveByType(ctx, saT.ID, "otp_reset_password")
+	if err != nil || rem == nil {
+		return defaultTpl
+	}
+	return rem.MessageTemplate
 }
 
 // resolveTenant looks up a tenant by slug first, then falls back to ID lookup.
@@ -522,14 +557,7 @@ func (h *PortalHandler) RequestResetPIN(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if tenant's WhatsApp session is connected
 	ctx := context.Background()
-	waStatus, err := h.waClient.GetSessionStatus(ctx, tenant.ID)
-	if err != nil || waStatus == nil || waStatus.Status != "connected" {
-		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-			"error": "Layanan WhatsApp tidak terhubung. Silakan hubungi admin " + tenant.Name + " untuk mengaktifkan WhatsApp.",
-		})
-	}
 
 	pin, err := generatePIN()
 	if err != nil {
@@ -541,25 +569,17 @@ func (h *PortalHandler) RequestResetPIN(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan PIN"})
 	}
 
-	// Send PIN via WhatsApp with informative message
-	message := fmt.Sprintf(
-		"🔐 *Reset Password - %s*\n\n"+
-			"Halo *%s*,\n\n"+
-			"Kami menerima permintaan reset password untuk akun Anda.\n\n"+
-			"Kode PIN Anda:\n"+
-			"*%s*\n\n"+
-			"⏱ Berlaku selama *5 menit*\n"+
-			"⚠️ Jangan bagikan kode ini kepada siapapun\n\n"+
-			"Jika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\n"+
-			"Terima kasih,\n"+
-			"_%s_",
-		tenant.Name, customer.Name, pin, tenant.Name,
-	)
-	_, waErr := h.waClient.SendMessage(ctx, tenant.ID, customer.Phone, message)
+	// Build message from template — always send via superadmin WA
+	tpl := h.otpTemplate(ctx)
+	msg := strings.ReplaceAll(tpl, "{nama}", customer.Name)
+	msg = strings.ReplaceAll(msg, "{kode_otp}", pin)
+	msg = strings.ReplaceAll(msg, "{nama_isp}", tenant.Name)
+	msg = strings.ReplaceAll(msg, "{durasi}", "5 menit")
+
+	_, waErr := h.waClient.SendMessage(ctx, "superadmin", customer.Phone, msg)
 	if waErr != nil {
-		// Clean up Redis key if WA send fails
 		h.redis.Del(c.Context(), redisKey)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim PIN melalui WhatsApp. Silakan hubungi admin."})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim OTP melalui WhatsApp"})
 	}
 
 	// Mask phone number for display: show first 4 and last 4 digits

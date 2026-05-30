@@ -58,6 +58,24 @@ services:
       - "1812:1812/udp"
       - "1813:1813/udp"
 
+  wa:
+    build:
+      context: ../wa-radius
+      dockerfile: Dockerfile
+    container_name: radius_wa
+    restart: unless-stopped
+    env_file:
+      - ../wa-radius/.env
+    environment:
+      - DATABASE_URL=postgresql://backend_radius:radius_secret_2024@db:5432/backend_radius?sslmode=disable
+    expose:
+      - "3002"
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_started
+
   nginx:
     image: nginx:alpine
     container_name: radius_nginx
@@ -67,9 +85,11 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/entrypoint.sh:/entrypoint.sh:ro
+      - ../frontend-radius/dist:/usr/share/nginx/html:ro
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     depends_on:
       - app
+      - wa
 
 volumes:
   pgdata:

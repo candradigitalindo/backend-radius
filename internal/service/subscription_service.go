@@ -7,9 +7,12 @@ import (
 	"log"
 	"time"
 
+	"strings"
+
 	"github.com/candrasyahputra/radius-server/internal/config"
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
+	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 )
 
@@ -21,10 +24,12 @@ var (
 )
 
 type SubscriptionService struct {
-	subRepo    repository.SubscriptionRepository
-	tenantRepo repository.TenantRepository
-	pgCfg      *config.PGConfig
-	baseURL    string
+	subRepo      repository.SubscriptionRepository
+	tenantRepo   repository.TenantRepository
+	reminderRepo repository.ReminderRepository
+	waClient     *whatsapp.Client
+	pgCfg        *config.PGConfig
+	baseURL      string
 }
 
 func NewSubscriptionService(subRepo repository.SubscriptionRepository, tenantRepo repository.TenantRepository) *SubscriptionService {
@@ -37,8 +42,33 @@ func (s *SubscriptionService) WithPG(pgCfg *config.PGConfig, baseURL string) *Su
 	return s
 }
 
+func (s *SubscriptionService) WithWAClient(waClient *whatsapp.Client) *SubscriptionService {
+	s.waClient = waClient
+	return s
+}
+
+func (s *SubscriptionService) WithReminderRepo(repo repository.ReminderRepository) *SubscriptionService {
+	s.reminderRepo = repo
+	return s
+}
+
 func (s *SubscriptionService) ListPlans(ctx context.Context) ([]model.SubscriptionPlan, error) {
-	return s.subRepo.ListPlans(ctx, true)
+	plans, err := s.subRepo.ListPlans(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	// "trial" adalah paket sistem — tidak boleh muncul di daftar pilihan tenant
+	result := plans[:0]
+	for _, p := range plans {
+		if p.Slug != "trial" {
+			result = append(result, p)
+		}
+	}
+	return result, nil
+}
+
+func (s *SubscriptionService) ListAllPlans(ctx context.Context) ([]model.SubscriptionPlan, error) {
+	return s.subRepo.ListPlans(ctx, false)
 }
 
 func (s *SubscriptionService) GetPlan(ctx context.Context, planID string) (*model.SubscriptionPlan, error) {
@@ -50,6 +80,18 @@ func (s *SubscriptionService) GetPlan(ctx context.Context, planID string) (*mode
 		return nil, ErrPlanNotFound
 	}
 	return plan, nil
+}
+
+func (s *SubscriptionService) CreatePlan(ctx context.Context, plan *model.SubscriptionPlan) error {
+	return s.subRepo.CreatePlan(ctx, plan)
+}
+
+func (s *SubscriptionService) UpdatePlan(ctx context.Context, plan *model.SubscriptionPlan) error {
+	return s.subRepo.UpdatePlan(ctx, plan)
+}
+
+func (s *SubscriptionService) DeletePlan(ctx context.Context, planID string) error {
+	return s.subRepo.DeletePlan(ctx, planID)
 }
 
 type SubscribeInput struct {
@@ -88,10 +130,10 @@ func (s *SubscriptionService) Subscribe(ctx context.Context, input SubscribeInpu
 		duration = plan.DurationMonths
 	}
 
-	// Calculate amount: yearly gets 10% discount
+	// Calculate amount: yearly gets 20% discount
 	amount := plan.Price * int64(duration)
 	if duration == 12 {
-		amount = amount * 90 / 100
+		amount = amount * 80 / 100
 	}
 
 	order := &model.SubscriptionOrder{
@@ -178,6 +220,9 @@ func (s *SubscriptionService) ConfirmPayment(ctx context.Context, orderID string
 	if err := s.activatePlan(ctx, order.TenantID, plan, &startsAt, &expiresAt); err != nil {
 		return nil, err
 	}
+
+	// Send WA payment confirmation (async)
+	go s.sendPaymentConfirmationWA(order, plan, &expiresAt)
 
 	return order, nil
 }
@@ -402,4 +447,79 @@ func (s *SubscriptionService) ProcessSubXenditWebhook(ctx context.Context, callb
 
 	_, err = s.ConfirmPayment(ctx, order.ID, method, payload.ID)
 	return err
+}
+
+func (s *SubscriptionService) sendPaymentConfirmationWA(order *model.SubscriptionOrder, plan *model.SubscriptionPlan, expiresAt *time.Time) {
+	if s.waClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tenant, err := s.tenantRepo.FindByID(ctx, order.TenantID)
+	if err != nil || tenant == nil || tenant.Phone == "" {
+		return
+	}
+
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+	salam := greetingByTimeWIB()
+	expiryStr := "-"
+	if expiresAt != nil {
+		expiryStr = expiresAt.In(loc).Format("02 January 2006")
+	}
+	durasi := fmt.Sprintf("%d bulan", order.DurationMonths)
+	jumlah := formatAmountSub(order.Amount)
+
+	defaultTpl := "✅ *Pembayaran Langganan Berhasil!*\n\nSelamat {salam} 🎉\n\nKepada Tim *{nama_isp}*,\n\nPembayaran langganan D Radius Anda telah berhasil kami terima.\n\n📋 *Detail Pembayaran:*\n• Paket: *{nama_paket}*\n• Durasi: *{durasi}*\n• Total: *Rp{jumlah}*\n• Aktif Hingga: *{tanggal_berakhir}*\n\nTerima kasih atas kepercayaan Anda. 🙏"
+
+	tpl := defaultTpl
+	if s.reminderRepo != nil && s.tenantRepo != nil {
+		if saT, err := s.tenantRepo.FindBySlug(ctx, "superadmin"); err == nil && saT != nil {
+			if rem, err := s.reminderRepo.FindActiveByType(ctx, saT.ID, "sub_payment"); err == nil && rem != nil {
+				tpl = rem.MessageTemplate
+			}
+		}
+	}
+
+	msg := strings.ReplaceAll(tpl, "{salam}", salam)
+	msg = strings.ReplaceAll(msg, "{nama_isp}", tenant.Name)
+	msg = strings.ReplaceAll(msg, "{nama_paket}", plan.Name)
+	msg = strings.ReplaceAll(msg, "{durasi}", durasi)
+	msg = strings.ReplaceAll(msg, "{jumlah}", jumlah)
+	msg = strings.ReplaceAll(msg, "{tanggal_berakhir}", expiryStr)
+
+	if _, err := s.waClient.SendMessage(ctx, "superadmin", tenant.Phone, msg); err != nil {
+		log.Printf("[sub-payment-wa] send failed for tenant %s: %v", tenant.ID, err)
+	}
+}
+
+func greetingByTimeWIB() string {
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+	hour := time.Now().In(loc).Hour()
+	switch {
+	case hour >= 5 && hour < 11:
+		return "Selamat Pagi"
+	case hour >= 11 && hour < 15:
+		return "Selamat Siang"
+	case hour >= 15 && hour < 18:
+		return "Selamat Sore"
+	default:
+		return "Selamat Malam"
+	}
+}
+
+func formatAmountSub(amount int64) string {
+	s := fmt.Sprintf("%d", amount)
+	n := len(s)
+	if n <= 3 {
+		return s
+	}
+	var result []byte
+	for i, c := range s {
+		if (n-i)%3 == 0 && i != 0 {
+			result = append(result, '.')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
 }

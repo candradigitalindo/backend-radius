@@ -31,6 +31,12 @@ var allowedSettingKeys = map[string]bool{
 	"isolir_page_custom_css":        true,
 	"app_theme":                     true,
 	"app_language":                  true,
+	"sa_wa_notify_subscribe":        true,
+	"sa_wa_notify_payment":          true,
+	"sa_wa_notify_due_date":         true,
+	"sa_wa_notify_otp":              true,
+	"sa_wa_notify_broadcast":        true,
+	"wa_notification_sender":        true, // "own" | "superadmin"
 }
 
 const maxSettingValueLen = 10000
@@ -108,4 +114,17 @@ func (s *SettingService) GetAsMap(ctx context.Context, tenantID string) (map[str
 		result[s.Key] = s.Value
 	}
 	return result, nil
+}
+
+// WASessionForTenant returns the WA session ID to use when sending notifications to customers.
+// Returns "superadmin" if the tenant chose to use the platform WA, otherwise returns the tenantID.
+func WASessionForTenant(ctx context.Context, tenantID string, settingRepo repository.SettingRepository) string {
+	if settingRepo == nil {
+		return tenantID
+	}
+	setting, err := settingRepo.FindByKey(ctx, tenantID, "wa_notification_sender")
+	if err == nil && setting != nil && setting.Value == "superadmin" {
+		return "superadmin"
+	}
+	return tenantID
 }

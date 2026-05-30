@@ -50,17 +50,19 @@ func main() {
 	ipamRepo := repository.NewIPAMRepository(db)
 	ontRepo := repository.NewONTRepository(db)
 	rewardRepo := repository.NewRewardRepository(db)
+	subscriptionRepo := repository.NewSubscriptionRepository(db)
+	settingRepo := repository.NewSettingRepository(db)
 
 	// WhatsApp client
 	waClient := whatsapp.NewClient(cfg.WhatsApp)
 
 	// Services
 	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo)
-	invoiceService.WithWAClient(waClient).WithReminderRepo(reminderRepo)
+	invoiceService.WithWAClient(waClient).WithReminderRepo(reminderRepo).WithSettingRepo(settingRepo)
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
 	invoiceService.WithReward(rewardService)
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
-	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient)
+	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, nil)
 
 	// GenieACS service (untuk ONT auto-provisioning retry)
@@ -69,21 +71,23 @@ func main() {
 
 	// Task handlers
 	handlers := &worker.Handlers{
-		DB:              db,
-		InvoiceService:  invoiceService,
-		CustomerService: customerService,
-		ReminderService: reminderService,
-		TenantRepo:      tenantRepo,
-		InvoiceRepo:     invoiceRepo,
-		ReminderRepo:    reminderRepo,
-		RouterRepo:      routerRepo,
-		SessionRepo:     sessionRepo,
-		IPAMRepo:        ipamRepo,
-		RouterService:   routerService,
-		RewardService:   rewardService,
-		WAClient:        waClient,
-		GenieACSService: genieacsService,
-		ONTRepo:         ontRepo,
+		DB:               db,
+		InvoiceService:   invoiceService,
+		CustomerService:  customerService,
+		ReminderService:  reminderService,
+		TenantRepo:       tenantRepo,
+		InvoiceRepo:      invoiceRepo,
+		ReminderRepo:     reminderRepo,
+		RouterRepo:       routerRepo,
+		SessionRepo:      sessionRepo,
+		IPAMRepo:         ipamRepo,
+		SettingRepo:      settingRepo,
+		RouterService:    routerService,
+		RewardService:    rewardService,
+		WAClient:         waClient,
+		GenieACSService:  genieacsService,
+		ONTRepo:          ontRepo,
+		SubscriptionRepo: subscriptionRepo,
 	}
 
 	// Asynq server
@@ -127,6 +131,7 @@ func main() {
 		ONTDiscoverCron:   getEnv("CRON_ONT_DISCOVER", "*/5 * * * *"),
 		ONTAutoMatchCron:  getEnv("CRON_ONT_AUTO_MATCH", "*/5 * * * *"),
 		ExpireRewardsCron: getEnv("CRON_EXPIRE_REWARDS", "0 2 * * *"),
+		SubExpiryCron:     getEnv("CRON_SUB_EXPIRY", "0 8 * * *"),
 	}
 
 	if err := worker.SetupScheduler(scheduler, tenantRepo, schedulerCfg); err != nil {

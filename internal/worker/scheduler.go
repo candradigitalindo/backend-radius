@@ -22,6 +22,7 @@ type SchedulerConfig struct {
 	ONTDiscoverCron    string
 	ONTAutoMatchCron   string
 	ExpireRewardsCron  string
+	SubExpiryCron      string
 }
 
 func invoiceTargetPeriod(now time.Time) (month, year int) {
@@ -78,6 +79,14 @@ func SetupScheduler(scheduler *asynq.Scheduler, tenantRepo repository.TenantRepo
 		return fmt.Errorf("register expire-reward-claims scheduler: %w", err)
 	}
 
+	subExpiryCron := cfg.SubExpiryCron
+	if subExpiryCron == "" {
+		subExpiryCron = "0 8 * * *" // daily at 08:00 WIB
+	}
+	if _, err := scheduler.Register(subExpiryCron, asynq.NewTask(TaskSubExpiryCheck, nil)); err != nil {
+		return fmt.Errorf("register sub-expiry-check scheduler: %w", err)
+	}
+
 	return nil
 }
 
@@ -132,7 +141,6 @@ func enqueueForAllTenants(ctx context.Context, tenantRepo repository.TenantRepos
 		return fmt.Errorf("list active tenants: %w", err)
 	}
 
-	enqueued := 0
 	for _, tenant := range tenants {
 		task, err := factory(tenant.ID, tenant.BillingCycle, tenant.DueDay)
 		if err != nil {
@@ -144,9 +152,7 @@ func enqueueForAllTenants(ctx context.Context, tenantRepo repository.TenantRepos
 			log.Printf("[scheduler] failed to enqueue task for tenant %s: %v", tenant.ID, err)
 			continue
 		}
-		enqueued++
 	}
 
-	log.Printf("[scheduler] enqueued %d tasks for %d active tenants", enqueued, len(tenants))
 	return nil
 }

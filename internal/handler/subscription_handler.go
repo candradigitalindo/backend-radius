@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 	"github.com/candrasyahputra/radius-server/internal/service"
 )
@@ -163,4 +164,25 @@ func (h *SubscriptionHandler) CreatePayment(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": result})
+}
+
+// GetStatus returns the current subscription status for the tenant.
+func (h *SubscriptionHandler) GetStatus(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	plans, err := h.subscriptionService.ListPlans(c.Context())
+	if err != nil {
+		plans = nil
+	}
+
+	orders, _, err := h.subscriptionService.ListOrders(c.Context(), tenantID, repository.OrderFilter{Page: 1, PerPage: 1})
+	var lastOrder *model.SubscriptionOrder
+	if err == nil && len(orders) > 0 {
+		lastOrder = &orders[0]
+	}
+
+	return c.JSON(fiber.Map{
+		"plans":      plans,
+		"last_order": lastOrder,
+	})
 }

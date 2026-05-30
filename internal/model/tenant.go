@@ -28,6 +28,11 @@ type Tenant struct {
 	PGMerchantID  string     `json:"pg_merchant_id"`
 	PGSandbox     bool       `json:"pg_sandbox"`
 	IsActive      bool       `json:"is_active"`
+	Status        string     `json:"status"` // active, pending, suspended
+	Fingerprint   string     `json:"fingerprint,omitempty"`
+	RegistrationIP string    `json:"registration_ip,omitempty"`
+	RiskScore     int        `json:"risk_score"`
+	RiskReasons   string     `json:"risk_reasons,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }

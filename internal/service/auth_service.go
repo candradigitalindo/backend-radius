@@ -2,9 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"math/big"
+	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
@@ -23,29 +28,148 @@ var (
 )
 
 type AuthService struct {
-	userRepo     repository.UserRepository
-	customerRepo repository.CustomerRepository
-	tenantRepo   repository.TenantRepository
-	roleRepo     repository.RoleRepository
-	tokenManager *token.Manager
+	userRepo      repository.UserRepository
+	customerRepo  repository.CustomerRepository
+	tenantRepo    repository.TenantRepository
+	roleRepo      repository.RoleRepository
+	subRepo       repository.SubscriptionRepository
+	reminderRepo  repository.ReminderRepository
+	tokenManager  *token.Manager
+	tenantService *TenantService
+	redis         *redis.Client
 }
 
-func NewAuthService(userRepo repository.UserRepository, customerRepo repository.CustomerRepository, tenantRepo repository.TenantRepository, roleRepo repository.RoleRepository, tokenManager *token.Manager) *AuthService {
+func NewAuthService(userRepo repository.UserRepository, customerRepo repository.CustomerRepository, tenantRepo repository.TenantRepository, roleRepo repository.RoleRepository, tokenManager *token.Manager, rdb *redis.Client) *AuthService {
 	return &AuthService{
 		userRepo:     userRepo,
 		customerRepo: customerRepo,
 		tenantRepo:   tenantRepo,
 		roleRepo:     roleRepo,
 		tokenManager: tokenManager,
+		redis:        rdb,
 	}
 }
 
+func (s *AuthService) WithReminderRepo(reminderRepo repository.ReminderRepository) *AuthService {
+	s.reminderRepo = reminderRepo
+	return s
+}
+
+func (s *AuthService) WithTenantService(tenantService *TenantService) *AuthService {
+	s.tenantService = tenantService
+	return s
+}
+
+func (s *AuthService) WithSubscriptionRepo(subRepo repository.SubscriptionRepository) *AuthService {
+	s.subRepo = subRepo
+	return s
+}
+
+func (s *AuthService) ListActivePlans(ctx context.Context) ([]model.SubscriptionPlan, error) {
+	if s.subRepo == nil {
+		return nil, fmt.Errorf("subscription repository not available")
+	}
+	return s.subRepo.ListPlans(ctx, true)
+}
+
+func (s *AuthService) SelectInitialPlan(ctx context.Context, tenantID, planSlug string) error {
+	if s.subRepo == nil {
+		return fmt.Errorf("subscription repository not available")
+	}
+
+	plan, err := s.subRepo.FindPlanBySlug(ctx, planSlug)
+	if err != nil {
+		return err
+	}
+	if plan == nil {
+		return fmt.Errorf("paket tidak ditemukan")
+	}
+
+	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if tenant == nil {
+		return fmt.Errorf("tenant tidak ditemukan")
+	}
+
+	// Update tenant plan and expiry
+	tenant.Plan = plan.Slug
+	tenant.MaxCustomers = plan.MaxCustomers
+	
+	now := time.Now()
+	if plan.DurationMonths > 0 {
+		expiry := now.AddDate(0, int(plan.DurationMonths), 0)
+		tenant.PlanExpiresAt = &expiry
+	} else if plan.Slug == "trial" {
+		expiry := now.AddDate(0, 0, 30)
+		tenant.PlanExpiresAt = &expiry
+	} else {
+		tenant.PlanExpiresAt = nil // Unlimited/Free
+	}
+
+	return s.tenantRepo.UpdatePlan(ctx, tenant)
+}
+
+func (s *AuthService) SendRegistrationOTP(ctx context.Context, email, phone string) error {
+	if s.tenantService == nil || s.tenantService.waClient == nil {
+		return fmt.Errorf("whatsapp service not available")
+	}
+
+	// Check if email already exists
+	existing, _ := s.userRepo.FindByEmailOnly(ctx, email)
+	if len(existing) > 0 {
+		return ErrEmailAlreadyExists
+	}
+
+	// Generate 6-digit OTP
+	otp := ""
+	for i := 0; i < 6; i++ {
+		n, _ := rand.Int(rand.Reader, big.NewInt(10))
+		otp += fmt.Sprintf("%d", n.Int64())
+	}
+
+	// Save to Redis (5 mins TTL)
+	redisKey := fmt.Sprintf("reg_otp:%s", phone)
+	if err := s.redis.Set(ctx, redisKey, otp, 5*time.Minute).Err(); err != nil {
+		return err
+	}
+
+	msg := ""
+	if s.reminderRepo != nil && s.tenantRepo != nil {
+		saT, err := s.tenantRepo.FindBySlug(ctx, "superadmin")
+		if err == nil && saT != nil {
+			rem, err := s.reminderRepo.FindActiveByType(ctx, saT.ID, "otp_registration")
+			if err == nil && rem != nil {
+				msg = rem.MessageTemplate
+				msg = strings.ReplaceAll(msg, "{kode_otp}", otp)
+			}
+		}
+	}
+
+	if msg == "" {
+		msg = fmt.Sprintf("🔐 *Kode Verifikasi D Radius*\n\n"+
+			"Halo,\n\n"+
+			"Kode verifikasi (OTP) untuk pendaftaran akun Anda adalah:\n\n"+
+			"*%s*\n\n"+
+			"Kode ini berlaku selama 5 menit. Jangan bagikan kode ini kepada siapapun.\n\n"+
+			"Terima kasih,\n"+
+			"_Tim Support D Radius_", otp)
+	}
+
+	_, err := s.tenantService.waClient.SendMessage(ctx, "superadmin", phone, msg)
+	return err
+}
+
 type RegisterInput struct {
-	TenantID string
-	Name     string
-	Email    string
-	Password string
-	Phone    string
+	TenantID    string
+	Name        string
+	Email       string
+	Password    string
+	Phone       string
+	Fingerprint string
+	IP          string
+	OTP         string
 }
 
 type LoginInput struct {
@@ -57,6 +181,7 @@ type LoginInput struct {
 type AuthResponse struct {
 	User      UserResponse     `json:"user"`
 	TokenPair *token.TokenPair `json:"token"`
+	Status    string           `json:"status,omitempty"`
 }
 
 type UserResponse struct {
@@ -72,6 +197,20 @@ type UserResponse struct {
 }
 
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthResponse, error) {
+	// Verify OTP
+	if input.OTP == "" {
+		return nil, errors.New("kode OTP wajib diisi")
+	}
+
+	redisKey := fmt.Sprintf("reg_otp:%s", input.Phone)
+	storedOTP, err := s.redis.Get(ctx, redisKey).Result()
+	if err != nil || storedOTP != input.OTP {
+		return nil, errors.New("kode OTP tidak valid atau sudah kadaluwarsa")
+	}
+
+	// Success verification, delete OTP
+	s.redis.Del(ctx, redisKey)
+
 	// Public registration only creates new tenants — cannot join existing tenant
 	if input.TenantID != "" {
 		return nil, errors.New("registrasi hanya untuk membuat tenant baru")
@@ -100,29 +239,48 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 		IsActive:     true,
 	}
 
+	status := "active"
 	if user.TenantID == "" {
-		tenant := &model.Tenant{
-			Name:         input.Name,
-			Slug:         id.New(),
-			Email:        input.Email,
-			Timezone:     "Asia/Jakarta",
-			Currency:     "IDR",
-			BillingCycle: 1,
-			DueDay:       20,
-			IsolirDay:    7,
-			GracePeriod:  3,
-			Plan:         "free",
-			MaxCustomers: 50,
-			IsActive:     true,
-		}
-		if err := s.tenantRepo.Create(ctx, tenant); err != nil {
-			return nil, err
-		}
-		user.TenantID = tenant.ID
-		user.Role = "owner"
+		if s.tenantService != nil {
+			tenant, err := s.tenantService.Create(ctx, CreateTenantInput{
+				Name:           input.Name,
+				Slug:           id.New(),
+				Email:          input.Email,
+				Phone:          input.Phone,
+				Plan:           "", // Empty plan initially
+				Fingerprint:    input.Fingerprint,
+				RegistrationIP: input.IP,
+			})
+			if err != nil {
+				return nil, err
+			}
+			user.TenantID = tenant.ID
+			user.Role = "owner"
+			status = tenant.Status
+		} else {
+			tenant := &model.Tenant{
+				Name:         input.Name,
+				Slug:         id.New(),
+				Email:        input.Email,
+				Timezone:     "Asia/Jakarta",
+				Currency:     "IDR",
+				BillingCycle: 1,
+				DueDay:       20,
+				IsolirDay:    7,
+				GracePeriod:  3,
+				Plan:         "free",
+				MaxCustomers: 50,
+				IsActive:     true,
+			}
+			if err := s.tenantRepo.Create(ctx, tenant); err != nil {
+				return nil, err
+			}
+			user.TenantID = tenant.ID
+			user.Role = "owner"
 
-		// Seed default roles for new tenant
-		_ = s.seedDefaultRoles(ctx, tenant.ID)
+			// Seed default roles for new tenant
+			_ = s.seedDefaultRoles(ctx, tenant.ID)
+		}
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
@@ -141,6 +299,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 	return &AuthResponse{
 		User:      s.toUserResponseWithPerms(ctx, user),
 		TokenPair: pair,
+		Status:    status,
 	}, nil
 }
 
@@ -173,6 +332,18 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*AuthRespons
 
 	if !user.IsActive {
 		return nil, ErrAccountInactive
+	}
+
+	// Check tenant status
+	tenant, err := s.tenantRepo.FindByID(ctx, user.TenantID)
+	if err != nil || tenant == nil {
+		return nil, ErrInvalidCredentials
+	}
+	if tenant.Status == "pending" {
+		return nil, errors.New("Akun Anda sedang dalam peninjauan keamanan. Kami akan mengaktifkannya segera.")
+	}
+	if tenant.Status == "suspended" || !tenant.IsActive {
+		return nil, errors.New("Akun Anda ditangguhkan atau tidak aktif")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {

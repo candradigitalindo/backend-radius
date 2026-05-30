@@ -20,11 +20,12 @@ import (
 )
 
 type AuthHandler struct {
-	authService *service.AuthService
-	userRepo    repository.UserRepository
-	tenantRepo  repository.TenantRepository
-	redis       *redis.Client
-	waClient    *whatsapp.Client
+	authService  *service.AuthService
+	userRepo     repository.UserRepository
+	tenantRepo   repository.TenantRepository
+	reminderRepo repository.ReminderRepository
+	redis        *redis.Client
+	waClient     *whatsapp.Client
 }
 
 func NewAuthHandler(authService *service.AuthService) *AuthHandler {
@@ -39,12 +40,48 @@ func (h *AuthHandler) WithResetDeps(userRepo repository.UserRepository, tenantRe
 	return h
 }
 
+func (h *AuthHandler) WithReminderRepo(repo repository.ReminderRepository) *AuthHandler {
+	h.reminderRepo = repo
+	return h
+}
+
+// otpTemplate returns the OTP WA message template from the superadmin tenant reminders.
+func (h *AuthHandler) otpTemplate(ctx context.Context) string {
+	defaultTpl := "🔐 *Kode OTP Reset Password - D Radius*\n\n" +
+		"Halo *{nama}*,\n\n" +
+		"Kami menerima permintaan reset password untuk akun *{nama_isp}* Anda.\n\n" +
+		"🔑 *Kode OTP Anda:*\n" +
+		"┌─────────────┐\n" +
+		"│  *{kode_otp}*  │\n" +
+		"└─────────────┘\n\n" +
+		"⏱ Berlaku selama *{durasi}*\n" +
+		"⚠️ Jangan bagikan kode ini kepada siapapun\n\n" +
+		"Jika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\n" +
+		"Terima kasih,\n" +
+		"_Tim D Radius_"
+
+	if h.reminderRepo == nil || h.tenantRepo == nil {
+		return defaultTpl
+	}
+	saT, err := h.tenantRepo.FindBySlug(ctx, "superadmin")
+	if err != nil || saT == nil {
+		return defaultTpl
+	}
+	rem, err := h.reminderRepo.FindActiveByType(ctx, saT.ID, "otp_reset_password")
+	if err != nil || rem == nil {
+		return defaultTpl
+	}
+	return rem.MessageTemplate
+}
+
 type registerRequest struct {
-	TenantID string `json:"tenant_id"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Phone    string `json:"phone"`
+	TenantID    string `json:"tenant_id"`
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	Phone       string `json:"phone"`
+	Fingerprint string `json:"fingerprint"`
+	OTP         string `json:"otp"`
 }
 
 type loginRequest struct {
@@ -57,14 +94,61 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+func (h *AuthHandler) ListPlans(c *fiber.Ctx) error {
+	plans, err := h.authService.ListActivePlans(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"data": plans})
+}
+
+func (h *AuthHandler) SelectPlan(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	if tenantID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	var req struct {
+		PlanSlug string `json:"plan_slug"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.PlanSlug == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Pilih paket terlebih dahulu"})
+	}
+
+	if err := h.authService.SelectInitialPlan(c.Context(), tenantID, req.PlanSlug); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "Paket berhasil dipilih"})
+}
+
+func (h *AuthHandler) SendRegistrationOTP(c *fiber.Ctx) error {
+	var req struct {
+		Email string `json:"email"`
+		Phone string `json:"phone"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.Email == "" || req.Phone == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Email dan nomor WhatsApp wajib diisi"})
+	}
+
+	if err := h.authService.SendRegistrationOTP(c.Context(), req.Email, req.Phone); err != nil {
+		if errors.Is(err, service.ErrEmailAlreadyExists) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "OTP telah dikirim via WhatsApp"})
+}
+
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var req registerRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
 	}
 
-	if req.Name == "" || req.Email == "" || req.Password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Nama, email, dan password wajib diisi"})
+	if req.Name == "" || req.Email == "" || req.Password == "" || req.Phone == "" || req.OTP == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Semua kolom termasuk OTP wajib diisi"})
 	}
 
 	if len(req.Password) < 8 {
@@ -72,17 +156,20 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	}
 
 	resp, err := h.authService.Register(c.Context(), service.RegisterInput{
-		TenantID: req.TenantID,
-		Name:     req.Name,
-		Email:    req.Email,
-		Password: req.Password,
-		Phone:    req.Phone,
+		TenantID:    req.TenantID,
+		Name:        req.Name,
+		Email:       req.Email,
+		Password:    req.Password,
+		Phone:       req.Phone,
+		Fingerprint: req.Fingerprint,
+		IP:          c.IP(),
+		OTP:         req.OTP,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrEmailAlreadyExists) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Pendaftaran gagal"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(resp)
@@ -191,7 +278,7 @@ func (h *AuthHandler) RequestResetPIN(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Email tidak ditemukan"})
 	}
 
-	// Verify phone matches
+	// Verify phone matches and tenant is active
 	var matchedUser *struct {
 		userID   string
 		tenantID string
@@ -200,17 +287,21 @@ func (h *AuthHandler) RequestResetPIN(c *fiber.Ctx) error {
 	}
 	for _, u := range users {
 		if u.Phone == phone && u.IsActive {
-			matchedUser = &struct {
-				userID   string
-				tenantID string
-				name     string
-				phone    string
-			}{u.ID, u.TenantID, u.Name, u.Phone}
-			break
+			// Check tenant status
+			tenant, _ := h.tenantRepo.FindByID(c.Context(), u.TenantID)
+			if tenant != nil && tenant.Status == "active" && tenant.IsActive {
+				matchedUser = &struct {
+					userID   string
+					tenantID string
+					name     string
+					phone    string
+				}{u.ID, u.TenantID, u.Name, u.Phone}
+				break
+			}
 		}
 	}
 	if matchedUser == nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Nomor WhatsApp tidak sesuai dengan akun terdaftar"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Akun tidak ditemukan atau belum aktif"})
 	}
 
 	// Rate limit
@@ -222,14 +313,7 @@ func (h *AuthHandler) RequestResetPIN(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check WA session for the user's tenant
 	ctx := context.Background()
-	waStatus, err := h.waClient.GetSessionStatus(ctx, matchedUser.tenantID)
-	if err != nil || waStatus == nil || waStatus.Status != "connected" {
-		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-			"error": "Layanan WhatsApp tidak terhubung. Hubungi admin untuk mengaktifkan WhatsApp.",
-		})
-	}
 
 	pin, err := generateResetPIN()
 	if err != nil {
@@ -241,29 +325,23 @@ func (h *AuthHandler) RequestResetPIN(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan PIN"})
 	}
 
-	// Resolve tenant name for the message
-	tenantName := "ISP Manager"
+	// Resolve tenant name
+	tenantName := "D Radius"
 	if t, err := h.tenantRepo.FindByID(ctx, matchedUser.tenantID); err == nil && t != nil {
 		tenantName = t.Name
 	}
 
-	message := fmt.Sprintf(
-		"🔐 *Reset Password - %s*\n\n"+
-			"Halo *%s*,\n\n"+
-			"Kami menerima permintaan reset password untuk akun Anda.\n\n"+
-			"Kode PIN Anda:\n"+
-			"*%s*\n\n"+
-			"⏱ Berlaku selama *5 menit*\n"+
-			"⚠️ Jangan bagikan kode ini kepada siapapun\n\n"+
-			"Jika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\n"+
-			"Terima kasih,\n"+
-			"_%s_",
-		tenantName, matchedUser.name, pin, tenantName,
-	)
-	_, waErr := h.waClient.SendMessage(ctx, matchedUser.tenantID, matchedUser.phone, message)
+	// Build message from template (superadmin WA sender)
+	tpl := h.otpTemplate(ctx)
+	msg := strings.ReplaceAll(tpl, "{nama}", matchedUser.name)
+	msg = strings.ReplaceAll(msg, "{kode_otp}", pin)
+	msg = strings.ReplaceAll(msg, "{nama_isp}", tenantName)
+	msg = strings.ReplaceAll(msg, "{durasi}", "5 menit")
+
+	_, waErr := h.waClient.SendMessage(ctx, "superadmin", matchedUser.phone, msg)
 	if waErr != nil {
 		h.redis.Del(c.Context(), redisKey)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim PIN melalui WhatsApp"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim OTP melalui WhatsApp"})
 	}
 
 	// Mask phone

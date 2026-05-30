@@ -17,21 +17,52 @@ import (
 )
 
 type Handlers struct {
-	DB              *pgxpool.Pool
-	InvoiceService  *service.InvoiceService
-	CustomerService *service.CustomerService
-	ReminderService *service.ReminderService
-	TenantRepo      repository.TenantRepository
-	InvoiceRepo     repository.InvoiceRepository
-	ReminderRepo    repository.ReminderRepository
-	RouterRepo      repository.RouterRepository
-	SessionRepo     repository.SessionRepository
-	IPAMRepo        repository.IPAMRepository
-	RouterService   *service.RouterService
-	RewardService   *service.RewardService
-	WAClient        *whatsapp.Client
-	GenieACSService *service.GenieACSService
-	ONTRepo         repository.ONTRepository
+	DB               *pgxpool.Pool
+	InvoiceService   *service.InvoiceService
+	CustomerService  *service.CustomerService
+	ReminderService  *service.ReminderService
+	TenantRepo       repository.TenantRepository
+	InvoiceRepo      repository.InvoiceRepository
+	ReminderRepo     repository.ReminderRepository
+	RouterRepo       repository.RouterRepository
+	SessionRepo      repository.SessionRepository
+	IPAMRepo         repository.IPAMRepository
+	SettingRepo      repository.SettingRepository
+	RouterService    *service.RouterService
+	RewardService    *service.RewardService
+	WAClient         *whatsapp.Client
+	GenieACSService  *service.GenieACSService
+	ONTRepo          repository.ONTRepository
+	SubscriptionRepo repository.SubscriptionRepository
+}
+
+// saTenantID returns the superadmin's tenant ID by looking up slug="superadmin".
+func (h *Handlers) saTenantID(ctx context.Context) string {
+	if h.TenantRepo == nil {
+		return ""
+	}
+	t, err := h.TenantRepo.FindBySlug(ctx, "superadmin")
+	if err != nil || t == nil {
+		return ""
+	}
+	return t.ID
+}
+
+// subReminderTemplate fetches a subscription reminder template from the superadmin tenant.
+// Falls back to the provided default if not found.
+func (h *Handlers) subReminderTemplate(ctx context.Context, reminderType, fallback string) string {
+	if h.ReminderRepo == nil {
+		return fallback
+	}
+	tid := h.saTenantID(ctx)
+	if tid == "" {
+		return fallback
+	}
+	rem, err := h.ReminderRepo.FindActiveByType(ctx, tid, reminderType)
+	if err != nil || rem == nil {
+		return fallback
+	}
+	return rem.MessageTemplate
 }
 
 func (h *Handlers) Register(mux *asynq.ServeMux) {
@@ -45,6 +76,7 @@ func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskONTDiscover, h.HandleONTDiscover)
 	mux.HandleFunc(TaskONTAutoMatch, h.HandleONTAutoMatch)
 	mux.HandleFunc(TaskExpireRewardClaims, h.HandleExpireRewardClaims)
+	mux.HandleFunc(TaskSubExpiryCheck, h.HandleSubscriptionExpiryCheck)
 }
 
 func (h *Handlers) HandleGenerateInvoices(ctx context.Context, t *asynq.Task) error {
@@ -58,7 +90,9 @@ func (h *Handlers) HandleGenerateInvoices(ctx context.Context, t *asynq.Task) er
 		return fmt.Errorf("generate invoices for tenant %s: %w", p.TenantID, err)
 	}
 
-	log.Printf("[worker] generated %d scheduled invoices for tenant %s", count, p.TenantID)
+	if count > 0 {
+		log.Printf("[worker] generated %d scheduled invoices for tenant %s", count, p.TenantID)
+	}
 	return nil
 }
 
@@ -111,7 +145,9 @@ func (h *Handlers) HandleAutoIsolir(ctx context.Context, t *asynq.Task) error {
 		go h.sendIsolirNotifications(p.TenantID, isolatedCustomers)
 	}
 
-	log.Printf("[worker] auto-isolir tenant %s: %d/%d customers isolated", p.TenantID, isolated, len(invoices))
+	if isolated > 0 {
+		log.Printf("[worker] auto-isolir tenant %s: %d/%d customers isolated", p.TenantID, isolated, len(invoices))
+	}
 	return nil
 }
 
@@ -177,7 +213,8 @@ func (h *Handlers) sendIsolirNotifications(tenantID string, customers []isolated
 		return
 	}
 
-	result, err := h.WAClient.SendReminders(ctx, tenantID, items)
+	waSession := service.WASessionForTenant(ctx, tenantID, h.SettingRepo)
+	result, err := h.WAClient.SendReminders(ctx, waSession, items)
 	if err != nil {
 		log.Printf("[isolir-wa] send failed: %v", err)
 		return
@@ -196,7 +233,9 @@ func (h *Handlers) HandleTriggerReminders(ctx context.Context, t *asynq.Task) er
 		return fmt.Errorf("trigger reminders for tenant %s: %w", p.TenantID, err)
 	}
 
-	log.Printf("[worker] reminders tenant %s: %s", p.TenantID, result.Message)
+	if result.TotalSent > 0 {
+		log.Printf("[worker] reminders tenant %s: %s", p.TenantID, result.Message)
+	}
 	return nil
 }
 
@@ -205,7 +244,9 @@ func (h *Handlers) HandleExpirePayments(ctx context.Context, t *asynq.Task) erro
 	if err != nil {
 		return fmt.Errorf("expire stale payments: %w", err)
 	}
-	log.Printf("[worker] expired %d stale gateway payments", expired)
+	if expired > 0 {
+		log.Printf("[worker] expired %d stale gateway payments", expired)
+	}
 	return nil
 }
 
@@ -391,6 +432,66 @@ func (h *Handlers) HandleExpireRewardClaims(ctx context.Context, t *asynq.Task) 
 	}
 	if expired > 0 {
 		log.Printf("[worker] expired %d stale reward claims", expired)
+	}
+	return nil
+}
+
+func (h *Handlers) HandleSubscriptionExpiryCheck(ctx context.Context, t *asynq.Task) error {
+	tenants, err := h.TenantRepo.ListExpiringSoon(ctx, 8)
+	if err != nil {
+		return fmt.Errorf("sub expiry check: list expiring: %w", err)
+	}
+	if len(tenants) == 0 {
+		return nil
+	}
+
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+	today := time.Now().In(loc).Truncate(24 * time.Hour)
+	salam := greetingByTimeWIB()
+
+	// Load templates once
+	tplH7 := h.subReminderTemplate(ctx, "sub_expiry_h7",
+		"Selamat {salam} 🙏\n\nKepada Tim *{nama_isp}*,\n\nLangganan paket *{nama_paket}* akan berakhir dalam *7 hari* pada *{tanggal_berakhir}*.\n\nSegera perpanjang agar layanan tidak terganggu.\n\nTerima kasih.")
+	tplH1 := h.subReminderTemplate(ctx, "sub_expiry_h1",
+		"⚠️ Selamat {salam},\n\nLangganan paket *{nama_paket}* ISP *{nama_isp}* berakhir *BESOK, {tanggal_berakhir}*.\n\nSegera lakukan perpanjangan. Terima kasih.")
+	tplH0 := h.subReminderTemplate(ctx, "sub_expiry_h0",
+		"🔴 Selamat {salam},\n\nLangganan paket *{nama_paket}* ISP *{nama_isp}* telah *BERAKHIR* pada *{tanggal_berakhir}*.\n\nAkses panel dibatasi. Silakan perpanjang sekarang.")
+
+	sent := 0
+	for _, tenant := range tenants {
+		if tenant.PlanExpiresAt == nil || h.WAClient == nil || tenant.Phone == "" {
+			continue
+		}
+
+		expiresLocal := tenant.PlanExpiresAt.In(loc).Truncate(24 * time.Hour)
+		daysLeft := int(expiresLocal.Sub(today).Hours() / 24)
+		expiryStr := tenant.PlanExpiresAt.In(loc).Format("02 January 2006")
+
+		var tpl string
+		switch daysLeft {
+		case 7:
+			tpl = tplH7
+		case 1:
+			tpl = tplH1
+		case 0:
+			tpl = tplH0
+		default:
+			continue
+		}
+
+		msg := strings.ReplaceAll(tpl, "{salam}", salam)
+		msg = strings.ReplaceAll(msg, "{nama_isp}", tenant.Name)
+		msg = strings.ReplaceAll(msg, "{nama_paket}", tenant.Plan)
+		msg = strings.ReplaceAll(msg, "{tanggal_berakhir}", expiryStr)
+
+		waCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, _ = h.WAClient.SendMessage(waCtx, "superadmin", tenant.Phone, msg)
+		cancel()
+		sent++
+	}
+
+	if sent > 0 {
+		log.Printf("[worker] sub-expiry-check: sent %d notifications", sent)
 	}
 	return nil
 }
