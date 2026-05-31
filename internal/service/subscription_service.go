@@ -27,8 +27,9 @@ type SubscriptionService struct {
 	subRepo      repository.SubscriptionRepository
 	tenantRepo   repository.TenantRepository
 	reminderRepo repository.ReminderRepository
+	settingRepo  repository.SettingRepository
 	waClient     *whatsapp.Client
-	pgCfg        *config.PGConfig
+	pgCfg        *config.PGConfig // fallback from .env
 	baseURL      string
 }
 
@@ -50,6 +51,43 @@ func (s *SubscriptionService) WithWAClient(waClient *whatsapp.Client) *Subscript
 func (s *SubscriptionService) WithReminderRepo(repo repository.ReminderRepository) *SubscriptionService {
 	s.reminderRepo = repo
 	return s
+}
+
+func (s *SubscriptionService) WithSettingRepo(repo repository.SettingRepository) *SubscriptionService {
+	s.settingRepo = repo
+	return s
+}
+
+// loadSAPGConfig loads the superadmin PG config from the DB settings table.
+// Falls back to the static pgCfg from .env if settingRepo is not set or key is missing.
+func (s *SubscriptionService) loadSAPGConfig(ctx context.Context) *config.PGConfig {
+	if s.settingRepo == nil {
+		return s.pgCfg
+	}
+	settings, err := s.settingRepo.List(ctx, "tnt-superadmin")
+	if err != nil || len(settings) == 0 {
+		return s.pgCfg
+	}
+	m := make(map[string]string, len(settings))
+	for _, st := range settings {
+		m[st.Key] = st.Value
+	}
+	provider := m["sa_pg_provider"]
+	apiKey := m["sa_pg_api_key"]
+	secretKey := m["sa_pg_secret_key"]
+	merchantID := m["sa_pg_merchant_id"]
+	sandbox := m["sa_pg_sandbox"] == "true"
+
+	if provider == "" && s.pgCfg != nil {
+		return s.pgCfg
+	}
+	return &config.PGConfig{
+		Provider:   provider,
+		APIKey:     apiKey,
+		SecretKey:  secretKey,
+		MerchantID: merchantID,
+		Sandbox:    sandbox,
+	}
 }
 
 func (s *SubscriptionService) ListPlans(ctx context.Context) ([]model.SubscriptionPlan, error) {
@@ -270,7 +308,8 @@ type SubPaymentResult struct {
 
 // CreatePayment generates a payment gateway transaction for a pending subscription order.
 func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenantID, returnURL string) (*SubPaymentResult, error) {
-	if s.pgCfg == nil || s.pgCfg.APIKey == "" {
+	pgCfg := s.loadSAPGConfig(ctx)
+	if pgCfg == nil || pgCfg.APIKey == "" {
 		return nil, errors.New("Payment gateway belum dikonfigurasi")
 	}
 
@@ -302,18 +341,20 @@ func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenant
 	}
 
 	merchantRef := "SUB-" + order.ID
-	callbackURL := s.baseURL + "/api/v1/webhooks/subscription/tripay"
 
-	switch s.pgCfg.Provider {
+	switch pgCfg.Provider {
 	case "midtrans":
-		return s.createSubMidtransPayment(ctx, order, tenant, merchantRef, returnURL)
+		return s.createSubMidtransPayment(ctx, order, tenant, pgCfg, merchantRef, returnURL)
+	case "xendit":
+		return s.createSubXenditPayment(ctx, order, tenant, pgCfg, merchantRef, returnURL)
 	default:
-		return s.createSubTripayPayment(ctx, order, tenant, merchantRef, returnURL, callbackURL)
+		callbackURL := s.baseURL + "/api/v1/webhooks/subscription/tripay"
+		return s.createSubTripayPayment(ctx, order, tenant, pgCfg, merchantRef, returnURL, callbackURL)
 	}
 }
 
-func (s *SubscriptionService) createSubTripayPayment(ctx context.Context, order *model.SubscriptionOrder, tenant *model.Tenant, merchantRef, returnURL, callbackURL string) (*SubPaymentResult, error) {
-	client := payment.NewTripayClient(s.pgCfg.APIKey, s.pgCfg.SecretKey, s.pgCfg.MerchantID, s.pgCfg.Sandbox)
+func (s *SubscriptionService) createSubTripayPayment(ctx context.Context, order *model.SubscriptionOrder, tenant *model.Tenant, pgCfg *config.PGConfig, merchantRef, returnURL, callbackURL string) (*SubPaymentResult, error) {
+	client := payment.NewTripayClient(pgCfg.APIKey, pgCfg.SecretKey, pgCfg.MerchantID, pgCfg.Sandbox)
 
 	resp, err := client.CreateTransaction(ctx, payment.CreateTransactionRequest{
 		Method:        "BRIVA",
@@ -345,8 +386,8 @@ func (s *SubscriptionService) createSubTripayPayment(ctx context.Context, order 
 	}, nil
 }
 
-func (s *SubscriptionService) createSubMidtransPayment(ctx context.Context, order *model.SubscriptionOrder, tenant *model.Tenant, merchantRef, returnURL string) (*SubPaymentResult, error) {
-	client := payment.NewMidtransClient(s.pgCfg.SecretKey, s.pgCfg.Sandbox)
+func (s *SubscriptionService) createSubMidtransPayment(ctx context.Context, order *model.SubscriptionOrder, tenant *model.Tenant, pgCfg *config.PGConfig, merchantRef, returnURL string) (*SubPaymentResult, error) {
+	client := payment.NewMidtransClient(pgCfg.SecretKey, pgCfg.Sandbox)
 
 	notificationURL := s.baseURL + "/api/v1/webhooks/subscription/midtrans"
 
@@ -377,14 +418,55 @@ func (s *SubscriptionService) createSubMidtransPayment(ctx context.Context, orde
 	}, nil
 }
 
+func (s *SubscriptionService) createSubXenditPayment(ctx context.Context, order *model.SubscriptionOrder, tenant *model.Tenant, pgCfg *config.PGConfig, merchantRef, returnURL string) (*SubPaymentResult, error) {
+	client := payment.NewXenditClient(pgCfg.APIKey, pgCfg.SecretKey, pgCfg.Sandbox)
+
+	callbackURL := s.baseURL + "/api/v1/webhooks/subscription/xendit"
+
+	resp, err := client.CreateInvoice(ctx, payment.XenditCreateInvoiceRequest{
+		ExternalID:      merchantRef,
+		Amount:          order.Amount,
+		Description:     fmt.Sprintf("Langganan %s", order.PlanName),
+		PayerEmail:      tenant.Email,
+		CustomerName:    tenant.Name,
+		CustomerPhone:   tenant.Phone,
+		SuccessRedirect: returnURL,
+		FailureRedirect: returnURL,
+		CallbackURL:     callbackURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("xendit create invoice: %w", err)
+	}
+
+	order.PaymentURL = resp.InvoiceURL
+	order.PaymentRef = merchantRef
+	if err := s.subRepo.UpdateOrder(ctx, order); err != nil {
+		return nil, err
+	}
+
+	return &SubPaymentResult{
+		OrderID:    order.ID,
+		PaymentURL: resp.InvoiceURL,
+	}, nil
+}
+
 // ProcessSubTripayWebhook handles Tripay callback for subscription orders.
 func (s *SubscriptionService) ProcessSubTripayWebhook(ctx context.Context, payload payment.TripayCallbackPayload) error {
+	pgCfg := s.loadSAPGConfig(ctx)
+	if pgCfg == nil || pgCfg.SecretKey == "" {
+		return fmt.Errorf("payment gateway superadmin belum dikonfigurasi")
+	}
+
+	tripayClient := payment.NewTripayClient(pgCfg.APIKey, pgCfg.SecretKey, pgCfg.MerchantID, pgCfg.Sandbox)
+	if !tripayClient.VerifyWebhookSignature(payload) {
+		return fmt.Errorf("signature webhook Tripay tidak valid")
+	}
+
 	if payload.Status != "PAID" {
 		log.Printf("[subscription webhook] tripay status=%s (ignored)", payload.Status)
 		return nil
 	}
 
-	// Find order by payment ref
 	order, err := s.subRepo.FindOrderByPaymentRef(ctx, payload.Reference)
 	if err != nil {
 		return err
@@ -402,6 +484,16 @@ func (s *SubscriptionService) ProcessSubTripayWebhook(ctx context.Context, paylo
 
 // ProcessSubMidtransWebhook handles Midtrans notification for subscription orders.
 func (s *SubscriptionService) ProcessSubMidtransWebhook(ctx context.Context, n payment.MidtransNotification) error {
+	pgCfg := s.loadSAPGConfig(ctx)
+	if pgCfg == nil || pgCfg.SecretKey == "" {
+		return fmt.Errorf("payment gateway superadmin belum dikonfigurasi")
+	}
+
+	midtransClient := payment.NewMidtransClient(pgCfg.SecretKey, pgCfg.Sandbox)
+	if !midtransClient.VerifyWebhookSignature(n) {
+		return fmt.Errorf("signature webhook Midtrans tidak valid")
+	}
+
 	if n.TransactionStatus != "capture" && n.TransactionStatus != "settlement" {
 		log.Printf("[subscription webhook] midtrans status=%s (ignored)", n.TransactionStatus)
 		return nil
@@ -424,6 +516,17 @@ func (s *SubscriptionService) ProcessSubMidtransWebhook(ctx context.Context, n p
 
 // ProcessSubXenditWebhook handles Xendit Invoice callback for subscription orders.
 func (s *SubscriptionService) ProcessSubXenditWebhook(ctx context.Context, callbackToken string, payload payment.XenditCallbackPayload) error {
+	pgCfg := s.loadSAPGConfig(ctx)
+	if pgCfg == nil || pgCfg.SecretKey == "" {
+		return fmt.Errorf("payment gateway superadmin belum dikonfigurasi")
+	}
+
+	// For Xendit: APIKey = secret key, SecretKey = webhook verification token
+	xenditClient := payment.NewXenditClient(pgCfg.APIKey, pgCfg.SecretKey, pgCfg.Sandbox)
+	if !xenditClient.VerifyWebhookToken(callbackToken) {
+		return fmt.Errorf("token webhook Xendit tidak valid")
+	}
+
 	if !payment.IsXenditPaymentSuccess(payload) {
 		log.Printf("[subscription webhook] xendit status=%s (ignored)", payload.Status)
 		return nil

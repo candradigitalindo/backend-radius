@@ -7,16 +7,23 @@ import (
 	"github.com/candrasyahputra/radius-server/internal/service"
 )
 
-const saTenantID = "superadmin"
+const saTenantID  = "tnt-superadmin" // FK ke tenants.id
+const saWASession = "superadmin"       // identifier sesi WA (bukan FK)
 
 type SASettingsHandler struct {
 	tenantService  *service.TenantService
 	settingService *service.SettingService
 	waClient       *whatsapp.Client
+	baseURL        string
 }
 
 func NewSASettingsHandler(tenantService *service.TenantService, settingService *service.SettingService, waClient *whatsapp.Client) *SASettingsHandler {
 	return &SASettingsHandler{tenantService: tenantService, settingService: settingService, waClient: waClient}
+}
+
+func (h *SASettingsHandler) WithBaseURL(url string) *SASettingsHandler {
+	h.baseURL = url
+	return h
 }
 
 // saSettingsResponse combines settings map.
@@ -131,6 +138,19 @@ func (h *SASettingsHandler) UpdateSettings(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Pengaturan berhasil disimpan"})
 }
 
+// GetWebhookURLs returns the subscription payment gateway callback URLs for the superadmin dashboard.
+func (h *SASettingsHandler) GetWebhookURLs(c *fiber.Ctx) error {
+	base := h.baseURL
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data": map[string]string{
+			"tripay":   base + "/api/v1/webhooks/subscription/tripay",
+			"midtrans": base + "/api/v1/webhooks/subscription/midtrans",
+			"xendit":   base + "/api/v1/webhooks/subscription/xendit",
+		},
+	})
+}
+
 // TestPGConnection tests the Midtrans/PG connection.
 func (h *SASettingsHandler) TestPGConnection(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true, "message": "Konfigurasi payment gateway tersimpan"})
@@ -144,7 +164,7 @@ func (h *SASettingsHandler) StartWASession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "error", "message": "WhatsApp service tidak dikonfigurasi"})
 	}
 
-	result, err := h.waClient.StartSession(c.Context(), saTenantID)
+	result, err := h.waClient.StartSession(c.Context(), saWASession)
 	if err != nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "error", "message": "WhatsApp service tidak tersedia: " + err.Error()})
 	}
@@ -158,7 +178,7 @@ func (h *SASettingsHandler) GetWASessionStatus(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "disconnected", "message": "WhatsApp service tidak dikonfigurasi"})
 	}
 
-	result, err := h.waClient.GetSessionStatus(c.Context(), saTenantID)
+	result, err := h.waClient.GetSessionStatus(c.Context(), saWASession)
 	if err != nil {
 		return c.JSON(fiber.Map{"status": "disconnected", "message": "WhatsApp service tidak tersedia"})
 	}
@@ -172,7 +192,7 @@ func (h *SASettingsHandler) GetWAQR(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "error", "message": "WhatsApp service tidak dikonfigurasi"})
 	}
 
-	result, err := h.waClient.GetQR(c.Context(), saTenantID)
+	result, err := h.waClient.GetQR(c.Context(), saWASession)
 	if err != nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "error", "message": "Gagal memuat QR: " + err.Error()})
 	}
@@ -186,7 +206,7 @@ func (h *SASettingsHandler) StopWASession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "error", "message": "WhatsApp service tidak dikonfigurasi"})
 	}
 
-	result, err := h.waClient.StopSession(c.Context(), saTenantID)
+	result, err := h.waClient.StopSession(c.Context(), saWASession)
 	if err != nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "error", "message": "Gagal menghentikan sesi: " + err.Error()})
 	}
