@@ -37,6 +37,15 @@ var allowedSettingKeys = map[string]bool{
 	"sa_wa_notify_otp":              true,
 	"sa_wa_notify_broadcast":        true,
 	"wa_notification_sender":        true, // "own" | "superadmin"
+	// Superadmin payment gateway
+	"sa_pg_provider":                true,
+	"sa_pg_api_key":                 true,
+	"sa_pg_secret_key":              true,
+	"sa_pg_merchant_id":             true,
+	"sa_pg_sandbox":                 true,
+	// Superadmin general
+	"sa_timezone":                   true,
+	"sa_app_theme":                  true,
 }
 
 const maxSettingValueLen = 10000
