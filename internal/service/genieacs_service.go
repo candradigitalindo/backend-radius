@@ -884,60 +884,6 @@ func buildAssociatedHostRefreshPaths() []string {
 	return paths
 }
 
-func extractWiFiPassword(device *genieacs.Device, preferredSSID string) (string, string, bool) {
-	for _, candidate := range buildWiFiPasswordCandidates(device, preferredSSID) {
-		if value := strings.TrimSpace(genieStrVal(device.GetNestedValue(candidate.Path))); value != "" {
-			return value, candidate.Source, true
-		}
-	}
-	return "", "", false
-}
-
-type wifiPasswordCandidate struct {
-	Path   string
-	Source string
-}
-
-func buildWiFiPasswordCandidates(device *genieacs.Device, preferredSSID string) []wifiPasswordCandidate {
-	indexes := prioritizedWLANIndexes(device, preferredSSID)
-	candidates := make([]wifiPasswordCandidate, 0, 24)
-	for _, wlanIdx := range indexes {
-		base := fmt.Sprintf("InternetGatewayDevice.LANDevice.1.WLANConfiguration.%d.", wlanIdx)
-		candidates = append(candidates,
-			wifiPasswordCandidate{Path: base + "PreSharedKey.1.PreSharedKey", Source: fmt.Sprintf("wlan_%d_presharedkey", wlanIdx)},
-			wifiPasswordCandidate{Path: base + "PreSharedKey.1.KeyPassphrase", Source: fmt.Sprintf("wlan_%d_presharedkey_keypassphrase", wlanIdx)},
-			wifiPasswordCandidate{Path: base + "KeyPassphrase", Source: fmt.Sprintf("wlan_%d_keypassphrase", wlanIdx)},
-			wifiPasswordCandidate{Path: base + "X_CT-COM_WPSKeyWord", Source: fmt.Sprintf("wlan_%d_x_ct_com_wpskeyword", wlanIdx)},
-		)
-		for wepIdx := 1; wepIdx <= 4; wepIdx++ {
-			candidates = append(candidates, wifiPasswordCandidate{
-				Path:   fmt.Sprintf("%sWEPKey.%d.WEPKey", base, wepIdx),
-				Source: fmt.Sprintf("wlan_%d_wepkey_%d", wlanIdx, wepIdx),
-			})
-		}
-	}
-	return candidates
-}
-
-func prioritizedWLANIndexes(device *genieacs.Device, preferredSSID string) []int {
-	if preferredSSID == "" {
-		return []int{1, 2}
-	}
-	matched := make([]int, 0, 2)
-	others := make([]int, 0, 2)
-	for _, wlanIdx := range []int{1, 2} {
-		ssid := genieStrVal(device.GetNestedValue(fmt.Sprintf("InternetGatewayDevice.LANDevice.1.WLANConfiguration.%d.SSID", wlanIdx)))
-		if ssid == preferredSSID {
-			matched = append(matched, wlanIdx)
-		} else {
-			others = append(others, wlanIdx)
-		}
-	}
-	if len(matched) == 0 {
-		return []int{1, 2}
-	}
-	return append(matched, others...)
-}
 
 func genieStrVal(v interface{}) string {
 	if v == nil {
