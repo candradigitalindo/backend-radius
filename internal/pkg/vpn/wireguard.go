@@ -185,6 +185,58 @@ func (m *Manager) AddPeerAllowedIP(vpnIP, extraSubnet string) error {
 	return fmt.Errorf("peer with VPN IP %s not found", vpnIP)
 }
 
+// RemovePeerAllowedIP removes a specific subnet from an existing peer's AllowedIPs.
+// Idempotent — does nothing if the subnet is not found.
+func (m *Manager) RemovePeerAllowedIP(vpnIP, subnet string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	client, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("wgctrl client: %w", err)
+	}
+	defer client.Close()
+
+	device, err := client.Device(m.iface)
+	if err != nil {
+		return fmt.Errorf("get device: %w", err)
+	}
+
+	target := vpnIP + "/32"
+	for _, p := range device.Peers {
+		for _, ipNet := range p.AllowedIPs {
+			if ipNet.String() == target {
+				// Filter out the subnet to remove
+				filtered := make([]net.IPNet, 0, len(p.AllowedIPs))
+				removed := false
+				for _, a := range p.AllowedIPs {
+					if a.String() == subnet {
+						removed = true
+						continue
+					}
+					filtered = append(filtered, a)
+				}
+				if !removed {
+					return nil // already absent
+				}
+				err = client.ConfigureDevice(m.iface, wgtypes.Config{
+					Peers: []wgtypes.PeerConfig{{
+						PublicKey:         p.PublicKey,
+						ReplaceAllowedIPs: true,
+						AllowedIPs:        filtered,
+					}},
+				})
+				if err != nil {
+					return fmt.Errorf("update peer allowed IPs: %w", err)
+				}
+				log.Printf("[VPN] Removed %s from peer %s allowed IPs", subnet, vpnIP)
+				return nil
+			}
+		}
+	}
+	return nil // peer not found — already cleaned or never existed
+}
+
 // RemovePeer removes a WireGuard peer by public key.
 func (m *Manager) RemovePeer(publicKey string) error {
 	m.mu.Lock()

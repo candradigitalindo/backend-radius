@@ -461,6 +461,12 @@ func (s *Server) handleAccounting(w radius.ResponseWriter, r *radius.Request) {
 		return
 	}
 
+	// Always sync nas_ip from accounting packet — WAN IP changes on PPPoE reconnect
+	// so this is more up-to-date than waiting for the next heartbeat interval.
+	if ip := nasIP.String(); ip != "" && ip != router.VPNIP {
+		_ = s.routerRepo.UpdateNASIP(ctx, router.ID, ip)
+	}
+
 	switch acctType {
 	case rfc2866.AcctStatusType_Value_Start:
 		s.handleAcctStart(ctx, username, sessionID, nasIP.String(), framedIP.String(), callerID)

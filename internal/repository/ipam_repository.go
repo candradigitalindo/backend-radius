@@ -202,10 +202,11 @@ func (r *ipamRepository) CreateAddressBatch(ctx context.Context, addrs []model.I
 	}
 
 	var sb strings.Builder
-	sb.WriteString(`INSERT INTO ip_addresses (id, tenant_id, pool_id, address, status, created_at, updated_at) VALUES `)
-	// ON CONFLICT suffix is appended after the values loop
-	args := make([]interface{}, 0, len(addrs)*7)
+	sb.WriteString(`INSERT INTO ip_addresses (id, tenant_id, pool_id, address, status, notes, created_at, updated_at) VALUES `)
+	args := make([]interface{}, 0, len(addrs)*8)
 	now := time.Now()
+
+	poolID := addrs[0].PoolID
 
 	for i := range addrs {
 		if addrs[i].ID == "" {
@@ -220,15 +221,25 @@ func (r *ipamRepository) CreateAddressBatch(ctx context.Context, addrs []model.I
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		base := i*7 + 1
-		sb.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base, base+1, base+2, base+3, base+4, base+5, base+6))
+		base := i*8 + 1
+		sb.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7))
 		args = append(args, addrs[i].ID, addrs[i].TenantID, addrs[i].PoolID, addrs[i].Address,
-			addrs[i].Status, addrs[i].CreatedAt, addrs[i].UpdatedAt)
+			addrs[i].Status, addrs[i].Notes, addrs[i].CreatedAt, addrs[i].UpdatedAt)
 	}
 
 	sb.WriteString(" ON CONFLICT (tenant_id, pool_id, address) DO NOTHING")
-	_, err := r.db.Exec(ctx, sb.String(), args...)
+	if _, err := r.db.Exec(ctx, sb.String(), args...); err != nil {
+		return err
+	}
+
+	// Update total_ips counter to reflect actual row count
+	_, err := r.db.Exec(ctx, `
+		UPDATE ip_pools SET total_ips = (
+			SELECT COUNT(*) FROM ip_addresses WHERE pool_id = $1
+		), updated_at = NOW()
+		WHERE id = $1
+	`, poolID)
 	return err
 }
 

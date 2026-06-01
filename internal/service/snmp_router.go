@@ -9,6 +9,64 @@ import (
 	"github.com/gosnmp/gosnmp"
 )
 
+// RouterHeartbeatData holds the lightweight data fetched via SNMP for router liveness checks.
+type RouterHeartbeatData struct {
+	Identity string
+	Uptime   string
+	CPULoad  int
+}
+
+// PollRouterHeartbeat does a minimal 2-request SNMP poll against the given IP.
+// It uses a 2-second timeout with zero retries to avoid blocking the worker.
+// Returns an error if the router is unreachable or does not respond.
+func (s *SNMPService) PollRouterHeartbeat(_ context.Context, ip, community string) (*RouterHeartbeatData, error) {
+	if community == "" {
+		community = "public"
+	}
+	client := &gosnmp.GoSNMP{
+		Target:    ip,
+		Port:      161,
+		Community: community,
+		Version:   gosnmp.Version2c,
+		Timeout:   2 * time.Second,
+		Retries:   0,
+	}
+	if err := client.Connect(); err != nil {
+		return nil, err
+	}
+	defer client.Conn.Close()
+
+	result := &RouterHeartbeatData{}
+
+	// Request 1: sysUpTime + sysName (one round-trip)
+	sysResp, err := client.Get([]string{oidSysUptime, oidSysName})
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range sysResp.Variables {
+		switch v.Name {
+		case oidSysUptime:
+			if ticks, ok := v.Value.(uint32); ok {
+				result.Uptime = formatUptime(ticks)
+			}
+		case oidSysName:
+			result.Identity = cleanSNMPString(snmpString(v))
+		}
+	}
+
+	// Request 2: CPU load index 1 (best-effort, skip on error)
+	cpuResp, err := client.Get([]string{oidHrProcessorLoad + ".1"})
+	if err == nil {
+		for _, v := range cpuResp.Variables {
+			if val, ok := v.Value.(int); ok {
+				result.CPULoad = val
+			}
+		}
+	}
+
+	return result, nil
+}
+
 type InterfaceBandwidth struct {
 	Name   string `json:"name"`
 	InBps  int64  `json:"in_bps"`

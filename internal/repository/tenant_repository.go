@@ -81,7 +81,8 @@ func (r *tenantRepository) Create(ctx context.Context, tenant *model.Tenant) err
 func (r *tenantRepository) FindByID(ctx context.Context, tenantID string) (*model.Tenant, error) {
 	query := `
 		SELECT id, name, slug, email, COALESCE(phone,''), COALESCE(address,''), COALESCE(logo_url,''),
-		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period, COALESCE(default_billing_type,'fixed'),
+		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period,
+		       COALESCE(default_billing_type,'fixed'), COALESCE(default_payment_timing,'due_date'),
 		       plan, plan_expires_at, max_customers,
 		       COALESCE(wa_api_key,''), COALESCE(wa_sender,''), COALESCE(pg_provider,''), COALESCE(pg_api_key,''), COALESCE(pg_secret_key,''), COALESCE(pg_merchant_id,''),
 		       COALESCE(pg_sandbox, true),
@@ -96,7 +97,8 @@ func (r *tenantRepository) FindByID(ctx context.Context, tenantID string) (*mode
 	var t model.Tenant
 	err := r.db.QueryRow(ctx, query, tenantID).Scan(
 		&t.ID, &t.Name, &t.Slug, &t.Email, &t.Phone, &t.Address, &t.LogoURL,
-		&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod, &t.DefaultBillingType,
+		&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod,
+		&t.DefaultBillingType, &t.DefaultPaymentTiming,
 		&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
 		&t.WAAPIKey, &t.WASender, &t.PGProvider, &t.PGAPIKey, &t.PGSecretKey, &t.PGMerchantID,
 		&t.PGSandbox,
@@ -146,16 +148,16 @@ func (r *tenantRepository) Update(ctx context.Context, tenant *model.Tenant) err
 			name = $1, email = $2, phone = $3, address = $4, logo_url = $5,
 			timezone = $6, currency = $7, billing_cycle = $8,
 			due_day = $9, isolir_day = $10, grace_period = $11,
-			default_billing_type = $12,
-			is_active = $13, status = $14, updated_at = $15
-		WHERE id = $16
+			default_billing_type = $12, default_payment_timing = $13,
+			is_active = $14, status = $15, updated_at = $16
+		WHERE id = $17
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		tenant.Name, tenant.Email, tenant.Phone, tenant.Address, tenant.LogoURL,
 		tenant.Timezone, tenant.Currency, tenant.BillingCycle,
 		tenant.DueDay, tenant.IsolirDay, tenant.GracePeriod,
-		tenant.DefaultBillingType,
+		tenant.DefaultBillingType, tenant.DefaultPaymentTiming,
 		tenant.IsActive, tenant.Status, tenant.UpdatedAt,
 		tenant.ID,
 	)

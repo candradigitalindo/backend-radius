@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/binary"
+	"net"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/repository"
@@ -15,8 +17,57 @@ func NewIPAMService(ipamRepo repository.IPAMRepository) *IPAMService {
 	return &IPAMService{ipamRepo: ipamRepo}
 }
 
+// CreatePool creates the pool and automatically populates all usable IP addresses
+// within the network range (excludes network address and broadcast).
+// Gateway is excluded from the available pool but added as a reserved entry.
+// Supports up to /16 (65534 hosts); larger networks are created without auto-populate.
 func (s *IPAMService) CreatePool(ctx context.Context, pool *model.IPPool) error {
-	return s.ipamRepo.CreatePool(ctx, pool)
+	if err := s.ipamRepo.CreatePool(ctx, pool); err != nil {
+		return err
+	}
+
+	_, ipNet, err := net.ParseCIDR(pool.Network)
+	if err != nil {
+		return nil // pool created, skip auto-populate if network is invalid
+	}
+
+	ones, bits := ipNet.Mask.Size()
+	hostBits := bits - ones
+	if hostBits > 16 {
+		return nil // too large (>65534 IPs), skip auto-populate
+	}
+
+	totalHosts := (1 << hostBits) - 2 // exclude network + broadcast
+	if totalHosts <= 0 {
+		return nil
+	}
+
+	netInt := binary.BigEndian.Uint32(ipNet.IP.To4())
+	gateway := pool.Gateway
+
+	addrs := make([]model.IPAddress, 0, totalHosts)
+	for i := 1; i <= totalHosts; i++ {
+		ip := make(net.IP, 4)
+		binary.BigEndian.PutUint32(ip, netInt+uint32(i))
+		ipStr := ip.String()
+
+		status := "available"
+		notes := ""
+		if ipStr == gateway {
+			status = "reserved"
+			notes = "gateway"
+		}
+		addrs = append(addrs, model.IPAddress{
+			TenantID: pool.TenantID,
+			PoolID:   pool.ID,
+			Address:  ipStr,
+			Status:   status,
+			Notes:    notes,
+		})
+	}
+
+	_ = s.ipamRepo.CreateAddressBatch(ctx, addrs)
+	return nil
 }
 
 func (s *IPAMService) GetPool(ctx context.Context, tenantID, poolID string) (*model.IPPool, error) {
@@ -77,4 +128,8 @@ func (s *IPAMService) ReleaseAndAssign(ctx context.Context, tenantID, poolID, cu
 
 func (s *IPAMService) GetPoolStats(ctx context.Context, tenantID, poolID string) (*repository.IPPoolStats, error) {
 	return s.ipamRepo.GetPoolStats(ctx, tenantID, poolID)
+}
+
+func (s *IPAMService) FindPoolByRouterID(ctx context.Context, routerID string) (*model.IPPool, error) {
+	return s.ipamRepo.FindPoolByRouterID(ctx, routerID)
 }

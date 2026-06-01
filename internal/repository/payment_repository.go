@@ -21,6 +21,10 @@ type PaymentRepository interface {
 	ListByInvoice(ctx context.Context, tenantID, invoiceID string) ([]model.Payment, error)
 	ListExpiredPending(ctx context.Context) ([]model.Payment, error)
 	List(ctx context.Context, tenantID string, filter PaymentFilter) ([]model.Payment, int, error)
+	// FindActivePaymentURL returns the payment URL of the latest non-expired pending payment
+	// for the given invoice, extracting it from the JSONB gateway_response column.
+	// Returns an empty string if no active payment with a URL exists.
+	FindActivePaymentURL(ctx context.Context, tenantID, invoiceID string) (string, error)
 }
 
 type PaymentFilter struct {
@@ -224,6 +228,36 @@ func (r *paymentRepository) List(ctx context.Context, tenantID string, filter Pa
 }
 
 // ListExpiredPending returns gateway payments that are still pending but whose expired_at has passed.
+func (r *paymentRepository) FindActivePaymentURL(ctx context.Context, tenantID, invoiceID string) (string, error) {
+	// Each gateway stores the URL under a different key inside gateway_response JSONB:
+	//   Tripay  → payment_url
+	//   Midtrans → redirect_url
+	//   Xendit   → invoice_url
+	var url string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(
+			gateway_response->>'payment_url',
+			gateway_response->>'redirect_url',
+			gateway_response->>'invoice_url',
+			''
+		)
+		FROM payments
+		WHERE tenant_id = $1
+		  AND invoice_id = $2
+		  AND status = 'pending'
+		  AND (expired_at IS NULL OR expired_at > NOW())
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenantID, invoiceID).Scan(&url)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return url, nil
+}
+
 func (r *paymentRepository) ListExpiredPending(ctx context.Context) ([]model.Payment, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, tenant_id, invoice_id, amount, payment_method, COALESCE(gateway,''),

@@ -21,6 +21,7 @@ type Router struct {
 	FreeMemory     *int64     `json:"free_memory"`
 	TotalMemory    *int64     `json:"total_memory"`
 	SNMPCommunity  string     `json:"snmp_community"`
+	NASIP          string     `json:"nas_ip"`
 	IsActive       bool       `json:"is_active"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`

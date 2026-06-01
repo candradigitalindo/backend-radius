@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"os/exec"
@@ -33,40 +32,78 @@ func (s *OLTService) WithVPNManager(vpnMgr *vpn.Manager) *OLTService {
 	return s
 }
 
-// provisionRoute adds WireGuard AllowedIP and OS route for the OLT subnet.
-// Called automatically on Create and Update so routing is ready immediately.
+// provisionRoute adds WireGuard AllowedIP and OS route for the OLT's host /32 route.
+// Uses host route (/32) instead of /24 assumption — accurate regardless of OLT subnet size.
 func (s *OLTService) provisionRoute(olt *model.OLT) {
 	if olt.Router == nil || olt.Router.VPNIP == "" {
 		return
 	}
 	ip := net.ParseIP(olt.IPAddress)
-	if ip == nil {
+	if ip == nil || ip.To4() == nil {
 		return
 	}
-	ip4 := ip.To4()
-	if ip4 == nil {
-		return
-	}
-	subnet := fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
+	// Use /32 host route — precise, no subnet assumption
+	hostRoute := olt.IPAddress + "/32"
 	gateway := olt.Router.VPNIP
 
 	if s.vpnManager != nil {
-		if err := s.vpnManager.AddPeerAllowedIP(gateway, subnet); err != nil {
-			log.Printf("[OLT] Failed to add WireGuard AllowedIP %s to peer %s: %v", subnet, gateway, err)
-		} else {
-			log.Printf("[OLT] Added WireGuard AllowedIP %s to peer %s", subnet, gateway)
+		if err := s.vpnManager.AddPeerAllowedIP(gateway, hostRoute); err != nil {
+			log.Printf("[OLT] WireGuard AllowedIP %s → peer %s: %v", hostRoute, gateway, err)
 		}
 	}
 
-	out, _ := exec.Command("ip", "route", "show", subnet).Output()
+	out, _ := exec.Command("ip", "route", "show", hostRoute).Output()
 	if strings.Contains(string(out), gateway) {
-		return // route already exists
-	}
-	if err := exec.Command("ip", "route", "add", subnet, "via", gateway, "dev", "wg0").Run(); err != nil {
-		log.Printf("[OLT] Failed to add route %s via %s: %v", subnet, gateway, err)
 		return
 	}
-	log.Printf("[OLT] Auto-added route %s via %s (OLT: %s)", subnet, gateway, olt.Name)
+	if err := exec.Command("ip", "route", "add", hostRoute, "via", gateway, "dev", "wg0").Run(); err != nil {
+		log.Printf("[OLT] route add %s via %s: %v", hostRoute, gateway, err)
+		return
+	}
+	log.Printf("[OLT] route added %s via %s (%s)", hostRoute, gateway, olt.Name)
+}
+
+// removeRoute cleans up both the OS route and WireGuard AllowedIP for a deleted OLT.
+// Best-effort: failures are logged but do not propagate — the DB record is already gone.
+func (s *OLTService) removeRoute(olt *model.OLT) {
+	if olt.Router == nil || olt.Router.VPNIP == "" || olt.IPAddress == "" {
+		return
+	}
+	hostRoute := olt.IPAddress + "/32"
+	gateway := olt.Router.VPNIP
+
+	// 1. Remove OS route
+	if err := exec.Command("ip", "route", "del", hostRoute, "via", gateway, "dev", "wg0").Run(); err != nil {
+		log.Printf("[OLT] route del %s: %v (may already be absent)", hostRoute, err)
+	} else {
+		log.Printf("[OLT] route removed %s (%s)", hostRoute, olt.Name)
+	}
+
+	// 2. Remove WireGuard AllowedIP so the peer stops accepting traffic for this host
+	if s.vpnManager != nil {
+		if err := s.vpnManager.RemovePeerAllowedIP(gateway, hostRoute); err != nil {
+			log.Printf("[OLT] WireGuard AllowedIP remove %s from peer %s: %v", hostRoute, gateway, err)
+		}
+	}
+}
+
+// RestoreAllRoutes re-provisions host routes for all active OLTs after a server restart.
+func (s *OLTService) RestoreAllRoutes(ctx context.Context) {
+	olts, err := s.oltRepo.ListAllWithRouter(ctx)
+	if err != nil {
+		log.Printf("[OLT] RestoreAllRoutes: list error: %v", err)
+		return
+	}
+	count := 0
+	for i := range olts {
+		if olts[i].Router != nil && olts[i].Router.VPNIP != "" {
+			s.provisionRoute(&olts[i])
+			count++
+		}
+	}
+	if count > 0 {
+		log.Printf("[OLT] Restored %d route(s) after startup", count)
+	}
 }
 
 type CreateOLTInput struct {
@@ -185,11 +222,35 @@ func (s *OLTService) Delete(ctx context.Context, tenantID, oltID string) error {
 	if olt == nil {
 		return ErrOLTNotFound
 	}
-	return s.oltRepo.Delete(ctx, tenantID, oltID)
+	if err := s.oltRepo.Delete(ctx, tenantID, oltID); err != nil {
+		return err
+	}
+	s.removeRoute(olt) // synchronous — ensures cleanup completes before returning
+	return nil
 }
 
 func (s *OLTService) List(ctx context.Context, tenantID string, filter repository.OLTFilter) ([]model.OLT, int, error) {
 	return s.oltRepo.List(ctx, tenantID, filter)
+}
+
+// SyncFromSNMP updates OLT record fields from live SNMP data.
+func (s *OLTService) SyncFromSNMP(ctx context.Context, tenantID, oltID string, result *OLTMonitorResult) error {
+	olt, err := s.oltRepo.FindByID(ctx, tenantID, oltID)
+	if err != nil || olt == nil {
+		return ErrOLTNotFound
+	}
+
+	// Update fields that come from SNMP: vendor/model parsed from sysDescr, system name
+	if result.System.Name != "" && (olt.Model == nil || *olt.Model == "") {
+		name := result.System.Name
+		olt.Model = &name
+	}
+	if result.System.Description != "" && (olt.Vendor == nil || *olt.Vendor == "") {
+		desc := result.System.Description
+		olt.Vendor = &desc
+	}
+
+	return s.oltRepo.Update(ctx, olt)
 }
 
 type CreatePONPortInput struct {

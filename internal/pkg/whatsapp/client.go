@@ -70,14 +70,21 @@ type SendDetail struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// CtaButton represents a call-to-action URL button shown below a WA message.
+type CtaButton struct {
+	Text string `json:"text"`
+	URL  string `json:"url"`
+}
+
 // ReminderItem represents a single reminder to send.
 type ReminderItem struct {
-	Phone         string `json:"phone"`
-	CustomerName  string `json:"customerName"`
-	InvoiceNumber string `json:"invoiceNumber"`
-	Amount        int64  `json:"amount"`
-	DueDate       string `json:"dueDate"`
-	Message       string `json:"message"`
+	Phone         string     `json:"phone"`
+	CustomerName  string     `json:"customerName"`
+	InvoiceNumber string     `json:"invoiceNumber"`
+	Amount        int64      `json:"amount"`
+	DueDate       string     `json:"dueDate"`
+	Message       string     `json:"message"`
+	CtaButton     *CtaButton `json:"ctaButton,omitempty"`
 }
 
 // StartSession starts/connects a WA session for a tenant.

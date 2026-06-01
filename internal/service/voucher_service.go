@@ -404,7 +404,7 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 			CustomerPhone:   input.BuyerPhone,
 			SuccessRedirect: input.ReturnURL,
 			FailureRedirect: input.ReturnURL,
-			CallbackURL:     s.baseURL + "/api/v1/webhooks/xendit/voucher",
+			CallbackURL:     s.baseURL + "/api/v1/webhooks/xendit/" + tenant.Slug + "/voucher",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create xendit invoice: %w", err)
@@ -430,7 +430,7 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 			FinishURL:       input.ReturnURL,
 			ErrorURL:        input.ReturnURL,
 			ItemName:        fmt.Sprintf("Voucher %s", product.Name),
-			NotificationURL: s.baseURL + "/api/v1/webhooks/midtrans/voucher",
+			NotificationURL: s.baseURL + "/api/v1/webhooks/midtrans/" + tenant.Slug + "/voucher",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create midtrans transaction: %w", err)
@@ -449,7 +449,7 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 			CustomerName:  input.BuyerName,
 			CustomerPhone: input.BuyerPhone,
 			ReturnURL:     input.ReturnURL,
-			CallbackURL:   s.baseURL + "/api/v1/webhooks/tripay/voucher",
+			CallbackURL:   s.baseURL + "/api/v1/webhooks/tripay/" + tenant.Slug + "/voucher",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create tripay transaction: %w", err)
@@ -484,7 +484,22 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 }
 
 // ProcessVoucherTripayWebhook handles a Tripay callback for a voucher payment.
-func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, payload payment.TripayCallbackPayload) error {
+func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, tenantSlug string, payload payment.TripayCallbackPayload) error {
+	if s.tenantRepo == nil {
+		return fmt.Errorf("tenant repo tidak dikonfigurasi")
+	}
+	tenant, err := s.tenantRepo.FindBySlug(ctx, tenantSlug)
+	if err != nil || tenant == nil {
+		return fmt.Errorf("tenant tidak ditemukan: %s", tenantSlug)
+	}
+	if tenant.PGSecretKey == "" {
+		return fmt.Errorf("payment gateway belum dikonfigurasi")
+	}
+	client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
+	if !client.VerifyWebhookSignature(payload) {
+		return fmt.Errorf("signature Tripay tidak valid")
+	}
+
 	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.Reference)
 	if err != nil {
 		return fmt.Errorf("find voucher payment: %w", err)
@@ -492,21 +507,8 @@ func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, payloa
 	if vp == nil {
 		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk referensi %s", payload.Reference)
 	}
-
-	// Verify signature
-	if s.tenantRepo == nil {
-		return fmt.Errorf("tenant repo tidak dikonfigurasi")
-	}
-	tenant, err := s.tenantRepo.FindByID(ctx, vp.TenantID)
-	if err != nil {
-		return fmt.Errorf("muat tenant: %w", err)
-	}
-	if tenant == nil || tenant.PGSecretKey == "" {
-		return fmt.Errorf("payment gateway belum dikonfigurasi")
-	}
-	client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
-	if !client.VerifyWebhookSignature(payload) {
-		return fmt.Errorf("signature Tripay tidak valid")
+	if vp.TenantID != tenant.ID {
+		return fmt.Errorf("pembayaran tidak milik tenant ini")
 	}
 
 	switch payload.Status {
@@ -528,7 +530,22 @@ func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, payloa
 }
 
 // ProcessVoucherMidtransWebhook handles a Midtrans notification for a voucher payment.
-func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, n payment.MidtransNotification) error {
+func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, tenantSlug string, n payment.MidtransNotification) error {
+	if s.tenantRepo == nil {
+		return fmt.Errorf("tenant repo tidak dikonfigurasi")
+	}
+	tenant, err := s.tenantRepo.FindBySlug(ctx, tenantSlug)
+	if err != nil || tenant == nil {
+		return fmt.Errorf("tenant tidak ditemukan: %s", tenantSlug)
+	}
+	if tenant.PGSecretKey == "" {
+		return fmt.Errorf("payment gateway belum dikonfigurasi")
+	}
+	client := payment.NewMidtransClient(tenant.PGSecretKey, tenant.PGSandbox)
+	if !client.VerifyWebhookSignature(n) {
+		return fmt.Errorf("signature Midtrans tidak valid")
+	}
+
 	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, n.OrderID)
 	if err != nil {
 		return fmt.Errorf("find voucher payment: %w", err)
@@ -536,21 +553,8 @@ func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, n pa
 	if vp == nil {
 		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk order_id %s", n.OrderID)
 	}
-
-	// Verify signature
-	if s.tenantRepo == nil {
-		return fmt.Errorf("tenant repo tidak dikonfigurasi")
-	}
-	tenant, err := s.tenantRepo.FindByID(ctx, vp.TenantID)
-	if err != nil {
-		return fmt.Errorf("muat tenant: %w", err)
-	}
-	if tenant == nil || tenant.PGSecretKey == "" {
-		return fmt.Errorf("payment gateway belum dikonfigurasi")
-	}
-	client := payment.NewMidtransClient(tenant.PGSecretKey, tenant.PGSandbox)
-	if !client.VerifyWebhookSignature(n) {
-		return fmt.Errorf("signature Midtrans tidak valid")
+	if vp.TenantID != tenant.ID {
+		return fmt.Errorf("pembayaran tidak milik tenant ini")
 	}
 
 	if payment.IsPaymentSuccess(n) {
@@ -571,7 +575,22 @@ func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, n pa
 }
 
 // ProcessVoucherXenditWebhook handles a Xendit Invoice callback for a voucher payment.
-func (s *VoucherService) ProcessVoucherXenditWebhook(ctx context.Context, callbackToken string, payload payment.XenditCallbackPayload) error {
+func (s *VoucherService) ProcessVoucherXenditWebhook(ctx context.Context, tenantSlug, callbackToken string, payload payment.XenditCallbackPayload) error {
+	if s.tenantRepo == nil {
+		return fmt.Errorf("tenant repo tidak dikonfigurasi")
+	}
+	tenant, err := s.tenantRepo.FindBySlug(ctx, tenantSlug)
+	if err != nil || tenant == nil {
+		return fmt.Errorf("tenant tidak ditemukan: %s", tenantSlug)
+	}
+	if tenant.PGSecretKey == "" {
+		return fmt.Errorf("payment gateway belum dikonfigurasi")
+	}
+	client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+	if !client.VerifyWebhookToken(callbackToken) {
+		return fmt.Errorf("token Xendit tidak valid")
+	}
+
 	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.ExternalID)
 	if err != nil {
 		return fmt.Errorf("find voucher payment: %w", err)
@@ -579,21 +598,8 @@ func (s *VoucherService) ProcessVoucherXenditWebhook(ctx context.Context, callba
 	if vp == nil {
 		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk external_id %s", payload.ExternalID)
 	}
-
-	// Verify callback token
-	if s.tenantRepo == nil {
-		return fmt.Errorf("tenant repo tidak dikonfigurasi")
-	}
-	tenant, err := s.tenantRepo.FindByID(ctx, vp.TenantID)
-	if err != nil {
-		return fmt.Errorf("muat tenant: %w", err)
-	}
-	if tenant == nil || tenant.PGSecretKey == "" {
-		return fmt.Errorf("payment gateway belum dikonfigurasi")
-	}
-	client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
-	if !client.VerifyWebhookToken(callbackToken) {
-		return fmt.Errorf("token Xendit tidak valid")
+	if vp.TenantID != tenant.ID {
+		return fmt.Errorf("pembayaran tidak milik tenant ini")
 	}
 
 	if payment.IsXenditPaymentSuccess(payload) {

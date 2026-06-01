@@ -19,6 +19,7 @@ type OLTRepository interface {
 	Update(ctx context.Context, olt *model.OLT) error
 	Delete(ctx context.Context, tenantID, oltID string) error
 	List(ctx context.Context, tenantID string, filter OLTFilter) ([]model.OLT, int, error)
+	ListAllWithRouter(ctx context.Context) ([]model.OLT, error)
 	CreatePONPort(ctx context.Context, port *model.PONPort) error
 	ListPONPorts(ctx context.Context, oltID string) ([]model.PONPort, error)
 	FindPONPortByID(ctx context.Context, portID string) (*model.PONPort, error)
@@ -225,6 +226,33 @@ func (r *oltRepository) CreatePONPort(ctx context.Context, port *model.PONPort) 
 		port.SFPRxPower, port.SFPTxPower,
 	)
 	return err
+}
+
+// ListAllWithRouter returns all active OLTs that have a router attached — used for route restore on startup.
+func (r *oltRepository) ListAllWithRouter(ctx context.Context) ([]model.OLT, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT o.id, o.tenant_id, o.ip_address, o.name,
+		       rt.id, rt.vpn_ip
+		FROM olts o
+		JOIN routers rt ON o.router_id = rt.id
+		WHERE o.status = 'active' AND rt.vpn_ip != '' AND rt.is_active = TRUE
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var olts []model.OLT
+	for rows.Next() {
+		var o model.OLT
+		var rt model.Router
+		if err := rows.Scan(&o.ID, &o.TenantID, &o.IPAddress, &o.Name, &rt.ID, &rt.VPNIP); err != nil {
+			return nil, err
+		}
+		o.Router = &rt
+		olts = append(olts, o)
+	}
+	return olts, nil
 }
 
 func (r *oltRepository) ListPONPorts(ctx context.Context, oltID string) ([]model.PONPort, error) {

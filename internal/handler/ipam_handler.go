@@ -243,6 +243,23 @@ func (h *IPAMHandler) FindAvailable(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": addr})
 }
 
+// GetPoolByRouter returns the IP pool linked to a router (if any), including stats.
+func (h *IPAMHandler) GetPoolByRouter(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	routerID := c.Params("id")
+
+	pool, err := h.ipamService.FindPoolByRouterID(c.Context(), routerID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat IP pool"})
+	}
+	if pool == nil {
+		return c.JSON(fiber.Map{"data": nil})
+	}
+
+	stats, _ := h.ipamService.GetPoolStats(c.Context(), tenantID, pool.ID)
+	return c.JSON(fiber.Map{"data": pool, "stats": stats})
+}
+
 func (h *IPAMHandler) GetPoolStats(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 	poolID := c.Params("poolId")

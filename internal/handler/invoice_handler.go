@@ -270,6 +270,20 @@ func (h *InvoiceHandler) GetPayments(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": payments})
 }
 
+// Notify sends (or resends) the WhatsApp invoice notification for a single invoice.
+func (h *InvoiceHandler) Notify(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	invoiceID := c.Params("id")
+
+	if err := h.invoiceService.NotifyInvoice(c.Context(), tenantID, invoiceID); err != nil {
+		if errors.Is(err, service.ErrInvoiceNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "Notifikasi WhatsApp berhasil dikirim"})
+}
+
 func (h *InvoiceHandler) ListPayments(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 

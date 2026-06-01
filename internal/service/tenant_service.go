@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
@@ -18,8 +19,10 @@ import (
 )
 
 var (
-	ErrTenantNotFound  = errors.New("Tenant tidak ditemukan")
-	ErrSlugAlreadyUsed = errors.New("Slug sudah digunakan")
+	ErrTenantNotFound    = errors.New("Tenant tidak ditemukan")
+	ErrSlugAlreadyUsed   = errors.New("Slug sudah digunakan")
+	ErrPhoneAlreadyUsed  = errors.New("Nomor telepon sudah terdaftar, gunakan nomor lain atau login")
+	ErrEmailAlreadyUsed  = errors.New("Email sudah terdaftar, silakan login atau gunakan email lain")
 )
 
 type TenantService struct {
@@ -74,19 +77,20 @@ type CreateTenantInput struct {
 }
 
 type UpdateTenantInput struct {
-	Name                string
-	Email               string
-	Phone               string
-	Address             string
-	LogoURL             string
-	Timezone            string
-	Currency            string
-	BillingCycle        int
-	DueDay              int
-	IsolirDay           int
-	GracePeriod         int
-	DefaultBillingType  string
-	IsActive            bool
+	Name                  string
+	Email                 string
+	Phone                 string
+	Address               string
+	LogoURL               string
+	Timezone              string
+	Currency              string
+	BillingCycle          int
+	DueDay                int
+	IsolirDay             int
+	GracePeriod           int
+	DefaultBillingType    string
+	DefaultPaymentTiming  string
+	IsActive              bool
 }
 
 type AdminUpdateTenantInput struct {
@@ -357,6 +361,19 @@ func (s *TenantService) Create(ctx context.Context, input CreateTenantInput) (*m
 	}
 
 	if err := s.tenantRepo.Create(ctx, tenant); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch {
+			case strings.Contains(pgErr.ConstraintName, "phone"):
+				return nil, ErrPhoneAlreadyUsed
+			case strings.Contains(pgErr.ConstraintName, "email"):
+				return nil, ErrEmailAlreadyUsed
+			case strings.Contains(pgErr.ConstraintName, "slug"):
+				return nil, ErrSlugAlreadyUsed
+			default:
+				return nil, errors.New("data yang Anda masukkan sudah terdaftar di sistem")
+			}
+		}
 		return nil, err
 	}
 
@@ -445,6 +462,9 @@ func (s *TenantService) Update(ctx context.Context, tenantID string, input Updat
 	tenant.GracePeriod = input.GracePeriod
 	if input.DefaultBillingType != "" {
 		tenant.DefaultBillingType = input.DefaultBillingType
+	}
+	if input.DefaultPaymentTiming != "" {
+		tenant.DefaultPaymentTiming = input.DefaultPaymentTiming
 	}
 	tenant.IsActive = input.IsActive
 
@@ -578,42 +598,78 @@ func (s *TenantService) List(ctx context.Context, filter repository.TenantFilter
 	return s.tenantRepo.List(ctx, filter)
 }
 
-// TestPGConnection verifies the payment gateway credentials configured for the tenant.
-// It instantiates the appropriate client and calls a lightweight authenticated endpoint.
-// Returns nil if the connection is successful, or an error with a descriptive message.
-func (s *TenantService) TestPGConnection(ctx context.Context, tenantID string) error {
-	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-	if tenant == nil {
-		return ErrTenantNotFound
+// PGCredentials holds payment gateway credentials for an ad-hoc connection test.
+type PGCredentials struct {
+	Provider   string
+	APIKey     string
+	SecretKey  string
+	MerchantID string
+	Sandbox    bool
+}
+
+// TestPGConnection verifies payment gateway credentials.
+// If override is non-nil, those credentials are tested directly (without reading from DB).
+// Otherwise, the credentials stored in the database are used.
+func (s *TenantService) TestPGConnection(ctx context.Context, tenantID string, override *PGCredentials) error {
+	var provider, apiKey, secretKey, merchantID string
+	var sandbox bool
+
+	if override != nil {
+		provider = override.Provider
+		apiKey = override.APIKey
+		secretKey = override.SecretKey
+		merchantID = override.MerchantID
+		sandbox = override.Sandbox
+	} else {
+		tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		if tenant == nil {
+			return ErrTenantNotFound
+		}
+		provider = tenant.PGProvider
+		apiKey = tenant.PGAPIKey
+		secretKey = tenant.PGSecretKey
+		merchantID = tenant.PGMerchantID
+		sandbox = tenant.PGSandbox
 	}
 
-	if tenant.PGProvider == "" {
+	if provider == "" {
 		return fmt.Errorf("payment gateway belum dikonfigurasi")
 	}
-	if tenant.PGAPIKey == "" {
-		return fmt.Errorf("API Key payment gateway belum diisi")
-	}
 
-	switch tenant.PGProvider {
+	switch provider {
 	case "tripay":
-		if tenant.PGSecretKey == "" || tenant.PGMerchantID == "" {
-			return fmt.Errorf("Tripay: Private Key dan Merchant Code wajib diisi")
+		if apiKey == "" {
+			return fmt.Errorf("Tripay: API Key wajib diisi")
 		}
-		client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
+		if secretKey == "" {
+			return fmt.Errorf("Tripay: Private Key wajib diisi")
+		}
+		if merchantID == "" {
+			return fmt.Errorf("Tripay: Merchant Code wajib diisi")
+		}
+		client := payment.NewTripayClient(apiKey, secretKey, merchantID, sandbox)
 		return client.TestConnection(ctx)
 
 	case "midtrans":
-		client := payment.NewMidtransClient(tenant.PGAPIKey, tenant.PGSandbox)
+		// Midtrans test only needs the Server Key (pg_secret_key)
+		if secretKey == "" {
+			return fmt.Errorf("Midtrans: Server Key wajib diisi")
+		}
+		client := payment.NewMidtransClient(secretKey, sandbox)
 		return client.TestConnection(ctx)
 
 	case "xendit":
-		client := payment.NewXenditClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGSandbox)
+		// Xendit test uses the Secret Key (pg_api_key)
+		if apiKey == "" {
+			return fmt.Errorf("Xendit: Secret Key wajib diisi")
+		}
+		client := payment.NewXenditClient(apiKey, secretKey, sandbox)
 		return client.TestConnection(ctx)
 
 	default:
-		return fmt.Errorf("provider payment gateway '%s' tidak didukung", tenant.PGProvider)
+		return fmt.Errorf("provider payment gateway '%s' tidak didukung", provider)
 	}
 }

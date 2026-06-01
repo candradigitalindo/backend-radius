@@ -27,8 +27,14 @@ func main() {
 
 	fmt.Println("Starting database seeder...")
 
+	// System data (superadmin tenant + reminder templates) — always run, idempotent
+	if err := seedSystemData(ctx, db); err != nil {
+		log.Fatalf("System data seeding failed: %v", err)
+	}
+
+	// Demo data — only on fresh install
 	if err := seed(ctx, db); err != nil {
-		log.Fatalf("Seeding failed: %v", err)
+		log.Fatalf("Demo data seeding failed: %v", err)
 	}
 
 	fmt.Println("Database seeded successfully!")
@@ -302,66 +308,6 @@ func seed(ctx context.Context, db *pgxpool.Pool) error {
 		}
 	}
 
-	// ==================== SUBSCRIPTION REMINDER TEMPLATES (system-level) ====================
-	fmt.Println("  Creating subscription reminder templates...")
-	subReminders := []struct {
-		name, rtype, template string
-	}{
-		{
-			name:  "Notifikasi H-7 Sebelum Berakhir",
-			rtype: "sub_expiry_h7",
-			template: "Selamat {salam} 🙏\n\nKepada Yth. Tim *{nama_isp}*,\n\nKami menginformasikan bahwa langganan layanan *D Radius* dengan paket *{nama_paket}* Anda akan berakhir dalam *7 hari lagi*, tepatnya pada *{tanggal_berakhir}*.\n\nAgar operasional bisnis ISP Anda tidak terganggu, mohon segera lakukan perpanjangan.\n\n💡 *Cara Perpanjang:*\nMasuk ke Panel D Radius → Menu Beranda → Klik Perpanjang Langganan → Pilih Paket → Lakukan Pembayaran\n\nJika memerlukan bantuan, jangan ragu menghubungi tim support kami.\n\nTerima kasih atas kepercayaan Anda menggunakan D Radius. 🙏",
-		},
-		{
-			name:  "Notifikasi H-1 Sebelum Berakhir",
-			rtype: "sub_expiry_h1",
-			template: "⚠️ *Peringatan Penting!*\n\nSelamat {salam} 🙏\n\nKepada Yth. Tim *{nama_isp}*,\n\nLangganan paket *{nama_paket}* untuk layanan D Radius Anda akan berakhir *BESOK, {tanggal_berakhir}*.\n\nHarap segera lakukan perpanjangan agar seluruh fitur dan layanan tetap dapat digunakan tanpa gangguan.\n\n🔗 Akses sekarang: Panel D Radius → Perpanjang Langganan\n\nHubungi kami jika memerlukan bantuan atau pertanyaan seputar perpanjangan.\n\nTerima kasih. 🙏",
-		},
-		{
-			name:  "Notifikasi Hari H Berakhir",
-			rtype: "sub_expiry_h0",
-			template: "🔴 *Pemberitahuan: Langganan Telah Berakhir*\n\nSelamat {salam},\n\nKepada Yth. Tim *{nama_isp}*,\n\nKami menginformasikan bahwa langganan paket *{nama_paket}* untuk layanan D Radius Anda telah *berakhir* pada *{tanggal_berakhir}*.\n\nAkses panel D Radius Anda saat ini *dibatasi*. Untuk mengaktifkan kembali seluruh fitur, silakan lakukan pembayaran perpanjangan secepatnya.\n\n🔗 Cara Perpanjang: Buka D Radius → Layar Perpanjangan → Pilih Paket → Bayar\n\nJika ada kendala atau pertanyaan, segera hubungi tim support kami.\n\nTerima kasih atas perhatian Anda. 🙏",
-		},
-		{
-			name:  "Konfirmasi Pembayaran Langganan",
-			rtype: "sub_payment",
-			template: "✅ *Pembayaran Langganan Berhasil!*\n\nSelamat {salam} 🎉\n\nKepada Yth. Tim *{nama_isp}*,\n\nTerima kasih! Pembayaran langganan D Radius Anda telah berhasil kami terima dan diproses.\n\n📋 *Detail Pembayaran:*\n• ISP: *{nama_isp}*\n• Paket: *{nama_paket}*\n• Durasi: *{durasi}*\n• Total Bayar: *Rp{jumlah}*\n• Aktif Hingga: *{tanggal_berakhir}*\n\nSeluruh fitur D Radius kini telah aktif dan siap digunakan. Semoga bisnis ISP Anda semakin berkembang! 🚀\n\nTerima kasih atas kepercayaan Anda. 🙏",
-		},
-		{
-			name:  "OTP Reset Password",
-			rtype: "otp_reset_password",
-			template: "🔐 *Kode OTP Reset Password*\n\nHalo *{nama}*,\n\nKami menerima permintaan reset password untuk akun *{nama_isp}* Anda.\n\n🔑 *Kode OTP Anda:*\n*─────────────*\n*    {kode_otp}    *\n*─────────────*\n\n⏱ Berlaku selama *{durasi}*\n⚠️ Jangan bagikan kode ini kepada siapapun demi keamanan akun Anda.\n\nJika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\nTerima kasih,\n_Tim D Radius_",
-		},
-		{
-			name:  "OTP Registrasi",
-			rtype: "otp_registration",
-			template: "🔐 *Kode Verifikasi D Radius*\n\nHalo,\n\nKode verifikasi (OTP) untuk pendaftaran akun Anda adalah:\n\n*─────────────*\n*    {kode_otp}    *\n*─────────────*\n\nKode ini berlaku selama 5 menit. Jangan bagikan kode ini kepada siapapun.\n\nTerima kasih,\n_Tim Support D Radius_",
-		},
-		{
-			name:  "Pendaftaran Berhasil (Welcome)",
-			rtype: "welcome_tenant",
-			template: "🚀 *Selamat Datang di D Radius!*\n\nHalo *{nama_isp}*,\n\nPendaftaran ISP Anda telah berhasil! Berikut adalah detail akun panel manajemen Anda:\n\n🌐 *Panel URL:* {panel_url}\n📧 *Email:* {email}\n🔑 *Password:* `{password}` (8 digit angka)\n\n⚠️ *Penting:*\nSegera ganti password Anda setelah login pertama kali demi keamanan akun.\n\nTerima kasih telah bergabung dengan D Radius!\n_Tim Support D Radius_",
-		},
-		{
-			name:  "Password Baru",
-			rtype: "reset_password_new",
-			template: "🔐 *Password Baru D Radius*\n\nHalo *{nama_isp}*,\n\nPassword akun panel manajemen Anda telah direset oleh SuperAdmin.\n\n📧 *Email:* {email}\n🔑 *Password Baru:* `{password}` (8 digit angka)\n\nSilakan gunakan password baru ini untuk login. Segera ganti password Anda demi keamanan.\n\nTerima kasih,\n_Tim Support D Radius_",
-		},
-	}
-	// Lookup superadmin tenant ID to store subscription reminder templates
-	var superadminTenantID string
-	_ = tx.QueryRow(ctx, `SELECT id FROM tenants WHERE slug = 'superadmin' LIMIT 1`).Scan(&superadminTenantID)
-	if superadminTenantID != "" {
-		for _, r := range subReminders {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO reminders (id, tenant_id, name, type, days_offset, message_template, is_active, created_at, updated_at)
-				VALUES ($1,$2,$3,$4,0,$5,true,$6,$7)
-			`, id.New(), superadminTenantID, r.name, r.rtype, r.template, now, now); err != nil {
-				return fmt.Errorf("insert subscription reminder %s: %w", r.name, err)
-			}
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
@@ -379,8 +325,87 @@ func seed(ctx context.Context, db *pgxpool.Pool) error {
 	fmt.Printf("  Voucher Products:   %d\n", len(voucherProducts))
 	fmt.Printf("  Settings:           %d\n", len(settings))
 	fmt.Printf("  Customer Reminders: %d\n", len(customerReminders))
-	fmt.Printf("  Sub. Reminders:     %d\n", len(subReminders))
 	fmt.Println("  -------------------------------------------")
 
+	return nil
+}
+
+// seedSystemData upserts the superadmin tenant and all system-level reminder templates.
+// Always runs, idempotent — safe to call on existing databases.
+func seedSystemData(ctx context.Context, db *pgxpool.Pool) error {
+	fmt.Println("  Ensuring superadmin tenant exists...")
+	now := time.Now()
+
+	// Upsert superadmin tenant (fixed ID so upsert is deterministic)
+	if _, err := db.Exec(ctx, `
+		INSERT INTO tenants (id, name, slug, email, phone, timezone, currency,
+			billing_cycle, due_day, isolir_day, grace_period, plan, max_customers,
+			is_active, created_at, updated_at)
+		VALUES ('tnt-superadmin', 'SuperAdmin', 'superadmin', 'superadmin@radius.local',
+			'00000000000', 'Asia/Jakarta', 'IDR', 1, 20, 21, 3, 'free', 999999,
+			true, $1, $2)
+		ON CONFLICT (id) DO NOTHING
+	`, now, now); err != nil {
+		return fmt.Errorf("upsert superadmin tenant: %w", err)
+	}
+
+	// System-level reminder templates under superadmin — upsert by (tenant_id, type)
+	systemReminders := []struct {
+		name, rtype, tmpl string
+	}{
+		{
+			"OTP Registrasi", "otp_registration",
+			"🔐 *Kode Verifikasi D Radius*\n\nHalo,\n\nKode verifikasi (OTP) untuk pendaftaran akun Anda adalah:\n\n*─────────────*\n*    {kode_otp}    *\n*─────────────*\n\nKode ini berlaku selama 5 menit. Jangan bagikan kode ini kepada siapapun.\n\nTerima kasih,\n_Tim Support D Radius_",
+		},
+		{
+			"OTP Reset Password", "otp_reset_password",
+			"🔐 *Kode OTP Reset Password*\n\nHalo *{nama}*,\n\nKami menerima permintaan reset password untuk akun *{nama_isp}* Anda.\n\n🔑 *Kode OTP Anda:*\n*─────────────*\n*    {kode_otp}    *\n*─────────────*\n\n⏱ Berlaku selama *{durasi}*\n⚠️ Jangan bagikan kode ini kepada siapapun.\n\nJika tidak merasa meminta reset password, abaikan pesan ini.\n\nTerima kasih,\n_Tim D Radius_",
+		},
+		{
+			"Pendaftaran Berhasil (Welcome)", "welcome_tenant",
+			"🚀 *Selamat Datang di D Radius!*\n\nHalo *{nama_isp}*,\n\nPendaftaran ISP Anda telah berhasil! Berikut detail akun panel manajemen Anda:\n\n🌐 *Panel URL:* {panel_url}\n📧 *Email:* {email}\n🔑 *Password:* `{password}`\n\n⚠️ Segera ganti password setelah login pertama kali.\n\nTerima kasih telah bergabung!\n_Tim Support D Radius_",
+		},
+		{
+			"Password Baru", "reset_password_new",
+			"🔐 *Password Baru D Radius*\n\nHalo *{nama_isp}*,\n\nPassword akun panel Anda telah direset.\n\n📧 *Email:* {email}\n🔑 *Password Baru:* `{password}`\n\nSegera ganti password Anda demi keamanan.\n\nTerima kasih,\n_Tim Support D Radius_",
+		},
+		{
+			"Konfirmasi Pembayaran Langganan", "sub_payment",
+			"✅ *Pembayaran Langganan Berhasil!*\n\nSelamat {salam} 🎉\n\nKepada Yth. Tim *{nama_isp}*,\n\nPembayaran langganan D Radius Anda telah berhasil kami terima.\n\n📋 *Detail Pembayaran:*\n• Paket: *{nama_paket}*\n• Durasi: *{durasi}*\n• Total: *Rp{jumlah}*\n• Aktif Hingga: *{tanggal_berakhir}*\n\nTerima kasih atas kepercayaan Anda. 🙏\n_Tim D Radius_",
+		},
+		{
+			"Notifikasi H-7 Sebelum Berakhir", "sub_expiry_h7",
+			"Selamat {salam} 🙏\n\nKepada Yth. Tim *{nama_isp}*,\n\nLangganan *{nama_paket}* Anda akan berakhir dalam *7 hari lagi* pada *{tanggal_berakhir}*.\n\nMohon segera lakukan perpanjangan agar operasional tidak terganggu.\n\n💡 Masuk ke Panel D Radius → Perpanjang Langganan.\n\nTerima kasih. 🙏",
+		},
+		{
+			"Notifikasi H-1 Sebelum Berakhir", "sub_expiry_h1",
+			"⚠️ *Peringatan Penting!*\n\nSelamat {salam} 🙏\n\nKepada Yth. Tim *{nama_isp}*,\n\nLangganan *{nama_paket}* Anda akan berakhir *BESOK, {tanggal_berakhir}*.\n\nHarap segera perpanjang agar seluruh fitur tetap aktif.\n\nTerima kasih. 🙏",
+		},
+		{
+			"Notifikasi Hari H Berakhir", "sub_expiry_h0",
+			"🔴 *Langganan Telah Berakhir*\n\nSelamat {salam},\n\nKepada Yth. Tim *{nama_isp}*,\n\nLangganan *{nama_paket}* Anda telah *berakhir* pada *{tanggal_berakhir}*. Akses panel saat ini dibatasi.\n\nSegera lakukan perpanjangan untuk mengaktifkan kembali seluruh fitur.\n\nTerima kasih. 🙏",
+		},
+	}
+
+	inserted := 0
+	for _, r := range systemReminders {
+		// INSERT only if (tenant_id, type) not yet present — safe without unique constraint
+		tag, err := db.Exec(ctx, `
+			INSERT INTO reminders (id, tenant_id, name, type, days_offset, message_template, is_active, created_at, updated_at)
+			SELECT $1, 'tnt-superadmin', $2, $3, 0, $4, true, $5, $6
+			WHERE NOT EXISTS (
+				SELECT 1 FROM reminders WHERE tenant_id = 'tnt-superadmin' AND type = $3
+			)
+		`, id.New(), r.name, r.rtype, r.tmpl, now, now)
+		if err != nil {
+			return fmt.Errorf("insert system reminder %q: %w", r.rtype, err)
+		}
+		if tag.RowsAffected() > 0 {
+			inserted++
+			fmt.Printf("    + %s (%s)\n", r.name, r.rtype)
+		}
+	}
+
+	fmt.Printf("  System reminders: %d inserted, %d already exist\n", inserted, len(systemReminders)-inserted)
 	return nil
 }

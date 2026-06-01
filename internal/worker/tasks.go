@@ -7,19 +7,32 @@ import (
 )
 
 const (
-	TaskGenerateInvoices  = "billing:generate_invoices"
-	TaskAutoIsolir        = "billing:auto_isolir"
-	TaskTriggerReminders  = "reminder:trigger"
-	TaskProcessPayment    = "payment:process_webhook"
-	TaskExpirePayments    = "payment:expire_stale"
-	TaskRouterMonitor     = "router:monitor"
-	TaskCleanSessions     = "session:clean_stale"
-	TaskONTProvisionRetry = "genieacs:provision_retry"
-	TaskONTDiscover       = "genieacs:ont_discover"
-	TaskONTAutoMatch      = "genieacs:ont_auto_match"
+	TaskGenerateInvoices   = "billing:generate_invoices"
+	TaskAutoIsolir         = "billing:auto_isolir"
+	TaskGracePeriodCheck   = "billing:grace_period_check"
+	TaskTriggerReminders   = "reminder:trigger"
+	TaskProcessPayment     = "payment:process_webhook"
+	TaskExpirePayments     = "payment:expire_stale"
+	TaskRouterMonitor      = "router:monitor"
+	TaskCleanSessions      = "session:clean_stale"
+	TaskONTProvisionRetry  = "genieacs:provision_retry"
+	TaskONTDiscover        = "genieacs:ont_discover"
+	TaskONTAutoMatch       = "genieacs:ont_auto_match"
 	TaskExpireRewardClaims = "reward:expire_claims"
 	TaskSubExpiryCheck     = "subscription:expiry_check"
 )
+
+type GracePeriodCheckPayload struct {
+	TenantID string `json:"tenant_id"`
+}
+
+func NewGracePeriodCheckTask(p GracePeriodCheckPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskGracePeriodCheck, data), nil
+}
 
 type GenerateInvoicesPayload struct {
 	TenantID string `json:"tenant_id"`

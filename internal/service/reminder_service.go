@@ -23,6 +23,7 @@ type ReminderService struct {
 	customerRepo repository.CustomerRepository
 	tenantRepo   repository.TenantRepository
 	settingRepo  repository.SettingRepository
+	paymentRepo  repository.PaymentRepository
 	waClient     *whatsapp.Client
 }
 
@@ -44,6 +45,11 @@ func NewReminderService(
 
 func (s *ReminderService) WithSettingRepo(repo repository.SettingRepository) *ReminderService {
 	s.settingRepo = repo
+	return s
+}
+
+func (s *ReminderService) WithPaymentRepo(repo repository.PaymentRepository) *ReminderService {
+	s.paymentRepo = repo
 	return s
 }
 
@@ -130,7 +136,7 @@ func (s *ReminderService) List(ctx context.Context, tenantID string, filter repo
 }
 
 // TriggerReminders processes all active reminders for a tenant.
-// It finds unpaid invoices that match each reminder\'s criteria and sends WhatsApp messages.
+// It finds unpaid invoices that match each reminder's criteria and sends WhatsApp messages.
 func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string) (*TriggerResult, error) {
 	reminders, err := s.reminderRepo.ListActive(ctx, tenantID)
 	if err != nil {
@@ -139,6 +145,15 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 
 	if len(reminders) == 0 {
 		return &TriggerResult{Message: "No active reminders configured"}, nil
+	}
+
+	// Check once whether this tenant has an active payment gateway configured.
+	hasPG := false
+	if s.paymentRepo != nil && s.tenantRepo != nil {
+		tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+		if err == nil && tenant != nil && tenant.PGAPIKey != "" {
+			hasPG = true
+		}
 	}
 
 	result := &TriggerResult{}
@@ -172,6 +187,9 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 			continue
 		}
 
+		// Only look up payment URLs when the template actually uses the variable.
+		needsPaymentURL := strings.Contains(reminder.MessageTemplate, "{payment_url}")
+
 		// Build reminder items for WhatsApp
 		monthNames := []string{"", "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"}
 		salam := greetingByTime()
@@ -189,6 +207,16 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 				paket = inv.Customer.Package.Name
 			}
 
+			// Resolve payment URL only when needed and PG is active.
+			paymentURL := ""
+			if needsPaymentURL && hasPG {
+				if url, err := s.paymentRepo.FindActivePaymentURL(ctx, tenantID, inv.ID); err == nil {
+					paymentURL = url
+				} else {
+					log.Printf("[reminder] failed to fetch payment URL for invoice %s: %v", inv.ID, err)
+				}
+			}
+
 			msg := strings.ReplaceAll(reminder.MessageTemplate, "{salam}", salam)
 			msg = strings.ReplaceAll(msg, "{nama}", inv.Customer.Name)
 			msg = strings.ReplaceAll(msg, "{jumlah}", formatInvoiceAmount(inv.TotalAmount))
@@ -198,6 +226,13 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 			msg = strings.ReplaceAll(msg, "{paket}", paket)
 			msg = strings.ReplaceAll(msg, "{kode_pelanggan}", inv.Customer.CustomerCode)
 			msg = strings.ReplaceAll(msg, "{alamat}", inv.Customer.Address)
+			msg = strings.ReplaceAll(msg, "{payment_url}", paymentURL)
+
+			// Attach CTA button when a payment URL is available.
+			var ctaButton *whatsapp.CtaButton
+			if paymentURL != "" {
+				ctaButton = &whatsapp.CtaButton{Text: "💳 Bayar Online", URL: paymentURL}
+			}
 
 			reminderItems = append(reminderItems, whatsapp.ReminderItem{
 				Phone:         inv.Customer.Phone,
@@ -206,6 +241,7 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 				Amount:        inv.TotalAmount,
 				DueDate:       inv.DueDate.Format("02/01/2006"),
 				Message:       msg,
+				CtaButton:     ctaButton,
 			})
 		}
 

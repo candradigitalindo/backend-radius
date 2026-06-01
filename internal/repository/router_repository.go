@@ -29,8 +29,10 @@ type RouterRepository interface {
 	Delete(ctx context.Context, tenantID, routerID string) error
 	List(ctx context.Context, tenantID string, filter RouterFilter) ([]model.Router, int, error)
 	UpdateHeartbeat(ctx context.Context, routerID string, info HeartbeatInfo) (wasOffline bool, err error)
+	UpdateNASIP(ctx context.Context, routerID, nasIP string) error
 	FindByHeartbeatToken(ctx context.Context, token string) (*model.Router, error)
 	MarkStaleOffline(ctx context.Context, tenantID string, staleThreshold time.Time) ([]string, error)
+	ListStaleWithVPN(ctx context.Context, tenantID string, staleThreshold time.Time) ([]model.Router, error)
 	CreateConnectionLog(ctx context.Context, log *model.RouterConnectionLog) error
 	ListConnectionLogs(ctx context.Context, routerID string, page, perPage int) ([]model.RouterConnectionLog, int, error)
 }
@@ -124,14 +126,14 @@ func (r *routerRepository) Update(ctx context.Context, router *model.Router) err
 		UPDATE routers SET
 			name = $1, identity = $2, vpn_ip = $3, vpn_public_key = $4,
 			radius_secret = $5, coa_port = $6, heartbeat_token = $7, snmp_community = $8,
-			is_active = $9, updated_at = $10
-		WHERE id = $11 AND tenant_id = $12
+			nas_ip = $9, is_active = $10, updated_at = $11
+		WHERE id = $12 AND tenant_id = $13
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		router.Name, router.Identity, router.VPNIP, router.VPNPublicKey,
 		router.RADIUSSecret, router.CoAPort, router.HeartbeatToken, router.SNMPCommunity,
-		router.IsActive, router.UpdatedAt,
+		router.NASIP, router.IsActive, router.UpdatedAt,
 		router.ID, router.TenantID,
 	)
 	return err
@@ -301,12 +303,19 @@ func (r *routerRepository) FindByIDOnly(ctx context.Context, routerID string) (*
 	return &rt, nil
 }
 
+// FindByVPNIP looks up an active router by VPN IP.
+// Falls back to nas_ip ONLY for routers without a VPN IP (Direct mode).
+// This prevents stale nas_ip on WireGuard routers from causing CoA misrouting.
 func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*model.Router, error) {
 	query := `
 		SELECT id, tenant_id, name, COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
 		       radius_secret, coa_port, is_online, is_active
 		FROM routers
-		WHERE vpn_ip = $1 AND is_active = TRUE
+		WHERE (
+		    vpn_ip = $1
+		    OR (nas_ip = $1 AND (vpn_ip IS NULL OR vpn_ip = ''))
+		) AND is_active = TRUE
+		ORDER BY (vpn_ip = $1) DESC
 		LIMIT 1
 	`
 
@@ -323,6 +332,14 @@ func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*mode
 		return nil, err
 	}
 	return &router, nil
+}
+
+// UpdateNASIP saves the router's WAN IP (used in Direct mode without WireGuard).
+func (r *routerRepository) UpdateNASIP(ctx context.Context, routerID, nasIP string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE routers SET nas_ip = $1, updated_at = NOW() WHERE id = $2
+	`, nasIP, routerID)
+	return err
 }
 
 func (r *routerRepository) ListAllVPNIPs(ctx context.Context) ([]string, error) {
@@ -400,6 +417,35 @@ func (r *routerRepository) MarkStaleOffline(ctx context.Context, tenantID string
 	}
 
 	return ids, nil
+}
+
+// ListStaleWithVPN returns active routers that haven't sent a heartbeat since staleThreshold
+// and have a VPN IP + SNMP community configured — these are candidates for SNMP polling.
+func (r *routerRepository) ListStaleWithVPN(ctx context.Context, tenantID string, staleThreshold time.Time) ([]model.Router, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, vpn_ip, COALESCE(snmp_community, 'public')
+		FROM routers
+		WHERE tenant_id = $1
+		  AND is_active = TRUE
+		  AND vpn_ip != ''
+		  AND COALESCE(snmp_community, '') != ''
+		  AND (last_seen_at IS NULL OR last_seen_at < $2)
+		ORDER BY last_seen_at ASC NULLS FIRST
+	`, tenantID, staleThreshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var routers []model.Router
+	for rows.Next() {
+		var rt model.Router
+		if err := rows.Scan(&rt.ID, &rt.VPNIP, &rt.SNMPCommunity); err != nil {
+			return nil, err
+		}
+		routers = append(routers, rt)
+	}
+	return routers, nil
 }
 
 func (r *routerRepository) CreateConnectionLog(ctx context.Context, logEntry *model.RouterConnectionLog) error {

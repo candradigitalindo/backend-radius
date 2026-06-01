@@ -29,6 +29,7 @@ type Handlers struct {
 	IPAMRepo         repository.IPAMRepository
 	SettingRepo      repository.SettingRepository
 	RouterService    *service.RouterService
+	SNMPService      *service.SNMPService
 	RewardService    *service.RewardService
 	WAClient         *whatsapp.Client
 	GenieACSService  *service.GenieACSService
@@ -68,6 +69,7 @@ func (h *Handlers) subReminderTemplate(ctx context.Context, reminderType, fallba
 func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskGenerateInvoices, h.HandleGenerateInvoices)
 	mux.HandleFunc(TaskAutoIsolir, h.HandleAutoIsolir)
+	mux.HandleFunc(TaskGracePeriodCheck, h.HandleGracePeriodCheck)
 	mux.HandleFunc(TaskTriggerReminders, h.HandleTriggerReminders)
 	mux.HandleFunc(TaskExpirePayments, h.HandleExpirePayments)
 	mux.HandleFunc(TaskRouterMonitor, h.HandleRouterMonitor)
@@ -110,10 +112,11 @@ func (h *Handlers) HandleAutoIsolir(ctx context.Context, t *asynq.Task) error {
 		return fmt.Errorf("tenant %s not found", p.TenantID)
 	}
 
-	cutoff := time.Now().AddDate(0, 0, -tenant.GracePeriod)
-	cutoffStr := cutoff.Format("2006-01-02")
+	// defaultIsolirDay = tenant.GracePeriod (used as fallback for customers without billing profile).
+	// Customers with a billing profile use billing_profiles.isolir_day from the DB query directly.
+	defaultIsolirDay := tenant.GracePeriod
 
-	invoices, err := h.InvoiceRepo.ListOverdueForIsolir(ctx, p.TenantID, cutoffStr)
+	invoices, err := h.InvoiceRepo.ListOverdueForIsolir(ctx, p.TenantID, defaultIsolirDay)
 	if err != nil {
 		return fmt.Errorf("list overdue invoices: %w", err)
 	}
@@ -149,6 +152,86 @@ func (h *Handlers) HandleAutoIsolir(ctx context.Context, t *asynq.Task) error {
 		log.Printf("[worker] auto-isolir tenant %s: %d/%d customers isolated", p.TenantID, isolated, len(invoices))
 	}
 	return nil
+}
+
+// HandleGracePeriodCheck sends a final WA warning to customers whose grace period
+// has elapsed — they have been isolated and still haven't paid.
+func (h *Handlers) HandleGracePeriodCheck(ctx context.Context, t *asynq.Task) error {
+	var p GracePeriodCheckPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return fmt.Errorf("unmarshal payload: %w", err)
+	}
+
+	tenant, err := h.TenantRepo.FindByID(ctx, p.TenantID)
+	if err != nil {
+		return fmt.Errorf("find tenant %s: %w", p.TenantID, err)
+	}
+	if tenant == nil {
+		return fmt.Errorf("tenant %s not found", p.TenantID)
+	}
+
+	// defaultGracePeriod from tenant (fallback for customers without billing profile)
+	customerIDs, err := h.InvoiceRepo.ListIsolatedGraceExpired(ctx, p.TenantID, tenant.GracePeriod)
+	if err != nil {
+		return fmt.Errorf("list grace-expired customers: %w", err)
+	}
+
+	if len(customerIDs) == 0 {
+		return nil
+	}
+
+	if h.WAClient == nil {
+		log.Printf("[worker] grace-period tenant %s: %d customers, WA client unavailable", p.TenantID, len(customerIDs))
+		return nil
+	}
+
+	// Load WA reminder template if configured
+	defaultTpl := "⛔ {salam} *{nama}*,\n\nLayanan internet Anda (kode: *{kode_pelanggan}*) telah melewati masa toleransi.\n\nSilakan segera lunasi tagihan untuk mengaktifkan kembali layanan Anda.\n\nTerima kasih."
+	tpl := defaultTpl
+	if h.ReminderRepo != nil {
+		if r, err := h.ReminderRepo.FindActiveByType(ctx, p.TenantID, "grace_expired"); err == nil && r != nil {
+			tpl = r.MessageTemplate
+		}
+	}
+
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+	salam := greetingByTimeWorker(loc)
+	waSession := service.WASessionForTenant(ctx, p.TenantID, h.SettingRepo)
+
+	sent := 0
+	for _, custID := range customerIDs {
+		cust, err := h.CustomerService.GetByID(ctx, p.TenantID, custID)
+		if err != nil || cust == nil || cust.Phone == "" {
+			continue
+		}
+		msg := strings.ReplaceAll(tpl, "{salam}", salam)
+		msg = strings.ReplaceAll(msg, "{nama}", cust.Name)
+		msg = strings.ReplaceAll(msg, "{kode_pelanggan}", cust.CustomerCode)
+
+		waCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, _ = h.WAClient.SendMessage(waCtx, waSession, cust.Phone, msg)
+		cancel()
+		sent++
+	}
+
+	if sent > 0 {
+		log.Printf("[worker] grace-period tenant %s: sent %d notifications", p.TenantID, sent)
+	}
+	return nil
+}
+
+func greetingByTimeWorker(loc *time.Location) string {
+	hour := time.Now().In(loc).Hour()
+	switch {
+	case hour >= 5 && hour < 11:
+		return "Selamat Pagi"
+	case hour >= 11 && hour < 15:
+		return "Selamat Siang"
+	case hour >= 15 && hour < 18:
+		return "Selamat Sore"
+	default:
+		return "Selamat Malam"
+	}
 }
 
 type isolatedCustomerInfo struct {
@@ -258,8 +341,32 @@ func (h *Handlers) HandleRouterMonitor(ctx context.Context, t *asynq.Task) error
 	if h.RouterRepo == nil {
 		return nil
 	}
-	// Routers not sending a heartbeat in the last 10 minutes are marked offline.
+	// Routers not sending a heartbeat in the last 10 minutes are candidates for SNMP poll.
 	threshold := time.Now().Add(-10 * time.Minute)
+
+	// SNMP fallback: poll stale routers that have a VPN IP before marking them offline.
+	// Each poll uses a 2s timeout with 0 retries — minimal load on router and server.
+	if h.SNMPService != nil {
+		stale, err := h.RouterRepo.ListStaleWithVPN(ctx, p.TenantID, threshold)
+		if err == nil {
+			for _, rt := range stale {
+				data, err := h.SNMPService.PollRouterHeartbeat(ctx, rt.VPNIP, rt.SNMPCommunity)
+				if err != nil {
+					continue // unreachable via SNMP — will be marked offline below
+				}
+				wasOffline, _ := h.RouterRepo.UpdateHeartbeat(ctx, rt.ID, repository.HeartbeatInfo{
+					Identity: data.Identity,
+					Uptime:   data.Uptime,
+					CPULoad:  data.CPULoad,
+				})
+				if wasOffline {
+					log.Printf("[worker] router-snmp tenant=%s router=%s back online via SNMP", p.TenantID, rt.VPNIP)
+				}
+			}
+		}
+	}
+
+	// Mark routers that are still stale (heartbeat AND SNMP both failed) as offline.
 	offlineIDs, err := h.RouterRepo.MarkStaleOffline(ctx, p.TenantID, threshold)
 	if err != nil {
 		return fmt.Errorf("mark stale routers offline (tenant %s): %w", p.TenantID, err)
@@ -377,7 +484,6 @@ func (h *Handlers) HandleONTDiscover(ctx context.Context, t *asynq.Task) error {
 		return nil
 	}
 
-	// Ambil satu tenant aktif sebagai konteks default untuk ONT yang belum ter-match
 	tenants, err := h.TenantRepo.ListActive(ctx)
 	if err != nil {
 		return fmt.Errorf("ont-discover: list tenants: %w", err)
@@ -386,8 +492,6 @@ func (h *Handlers) HandleONTDiscover(ctx context.Context, t *asynq.Task) error {
 		return nil
 	}
 
-	// Gunakan tenant pertama sebagai "holding" tenant; AutoMatch akan meluruskan tenant
-	// ke tenant yang benar setelah PPPoE username cocok dengan pelanggan.
 	defaultTenantID := tenants[0].ID
 	result, err := h.GenieACSService.DiscoverONTs(ctx, defaultTenantID)
 	if err != nil {
@@ -396,6 +500,26 @@ func (h *Handlers) HandleONTDiscover(ctx context.Context, t *asynq.Task) error {
 	if result.NewDiscovered > 0 {
 		log.Printf("[worker] ont-discover: %d perangkat baru ditemukan dari %d total di GenieACS",
 			result.NewDiscovered, result.TotalInGenieACS)
+
+		// Fast path: langsung auto-match + provision tanpa menunggu worker berikutnya.
+		// Ini memotong waktu dari ~12 menit menjadi ~1 menit.
+		matchResult, merr := h.GenieACSService.AutoMatchONTs(ctx, "")
+		if merr == nil && matchResult.Matched > 0 {
+			log.Printf("[worker] ont-discover fast-match: %d device langsung terhubung ke pelanggan", matchResult.Matched)
+		}
+		// Provision semua yang belum terprovisi (termasuk yang baru saja ter-match)
+		onts, perr := h.ONTRepo.FindUnprovisioned(ctx)
+		if perr == nil {
+			provOK := 0
+			for _, ont := range onts {
+				if err := h.GenieACSService.ProvisionONT(ctx, ont.TenantID, ont.ID); err == nil {
+					provOK++
+				}
+			}
+			if provOK > 0 {
+				log.Printf("[worker] ont-discover fast-provision: %d device berhasil diprovisioning", provOK)
+			}
+		}
 	}
 
 	return nil

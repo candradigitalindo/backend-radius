@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
@@ -284,6 +285,17 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch {
+			case strings.Contains(pgErr.ConstraintName, "email"):
+				return nil, ErrEmailAlreadyExists
+			case strings.Contains(pgErr.ConstraintName, "phone"):
+				return nil, errors.New("nomor telepon sudah terdaftar, gunakan nomor lain")
+			default:
+				return nil, errors.New("data yang Anda masukkan sudah terdaftar di sistem")
+			}
+		}
 		return nil, err
 	}
 

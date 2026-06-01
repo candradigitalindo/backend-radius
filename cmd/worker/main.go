@@ -52,18 +52,24 @@ func main() {
 	rewardRepo := repository.NewRewardRepository(db)
 	subscriptionRepo := repository.NewSubscriptionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
+	billingProfileRepo := repository.NewBillingProfileRepository(db)
 
 	// WhatsApp client
 	waClient := whatsapp.NewClient(cfg.WhatsApp)
 
-	// Services
-	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo)
-	invoiceService.WithWAClient(waClient).WithReminderRepo(reminderRepo).WithSettingRepo(settingRepo)
+	// Services — semua With* method mutate in-place, chain dengan benar
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
-	invoiceService.WithReward(rewardService)
+	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).
+		WithTenantRepo(tenantRepo).
+		WithWAClient(waClient).
+		WithReminderRepo(reminderRepo).
+		WithSettingRepo(settingRepo).
+		WithReward(rewardService).
+		WithBillingProfileRepo(billingProfileRepo)
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
 	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, nil)
+	snmpService := service.NewSNMPService(nil, nil)
 
 	// GenieACS service (untuk ONT auto-provisioning retry)
 	genieacsClient := genieacs.NewClient(cfg.GenieACS)
@@ -83,6 +89,7 @@ func main() {
 		IPAMRepo:         ipamRepo,
 		SettingRepo:      settingRepo,
 		RouterService:    routerService,
+		SNMPService:      snmpService,
 		RewardService:    rewardService,
 		WAClient:         waClient,
 		GenieACSService:  genieacsService,
@@ -123,6 +130,7 @@ func main() {
 	schedulerCfg := worker.SchedulerConfig{
 		InvoiceCron:       getEnv("CRON_INVOICE", "0 8 * * *"),
 		IsolirCron:        getEnv("CRON_ISOLIR", "0 6 * * *"),
+		GracePeriodCron:   getEnv("CRON_GRACE_PERIOD", "0 9 * * *"),
 		ReminderCron:      getEnv("CRON_REMINDER", "0 10 * * *"),
 		ExpirePayCron:     getEnv("CRON_EXPIRE_PAY", "*/30 * * * *"),
 		RouterMonitorCron: getEnv("CRON_ROUTER_MONITOR", "*/5 * * * *"),

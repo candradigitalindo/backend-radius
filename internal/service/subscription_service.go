@@ -11,6 +11,7 @@ import (
 
 	"github.com/candrasyahputra/radius-server/internal/config"
 	"github.com/candrasyahputra/radius-server/internal/model"
+	"github.com/candrasyahputra/radius-server/internal/pkg/id"
 	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/repository"
@@ -283,6 +284,126 @@ func (s *SubscriptionService) GetOrder(ctx context.Context, orderID, tenantID st
 	return order, nil
 }
 
+// ── Superadmin order management ──────────────────────────────────────────────
+
+func (s *SubscriptionService) AdminListAllOrders(ctx context.Context, filter repository.AdminOrderFilter) ([]repository.AdminOrderRow, int, error) {
+	return s.subRepo.ListAllOrders(ctx, filter)
+}
+
+func (s *SubscriptionService) AdminGetOrder(ctx context.Context, orderID string) (*model.SubscriptionOrder, error) {
+	order, err := s.subRepo.FindOrderByID(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrOrderNotFound
+	}
+	return order, nil
+}
+
+type AdminUpdateOrderInput struct {
+	Status        string
+	PaymentMethod string
+	PaymentRef    string
+	Notes         string
+	PaidAt        *time.Time
+	StartsAt      *time.Time
+	ExpiresAt     *time.Time
+}
+
+func (s *SubscriptionService) AdminUpdateOrder(ctx context.Context, orderID string, input AdminUpdateOrderInput) (*model.SubscriptionOrder, error) {
+	order, err := s.subRepo.FindOrderByID(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrOrderNotFound
+	}
+
+	prevStatus := order.Status
+
+	if input.Status != "" {
+		order.Status = input.Status
+	}
+	if input.PaymentMethod != "" {
+		order.PaymentMethod = input.PaymentMethod
+	}
+	if input.PaymentRef != "" {
+		order.PaymentRef = input.PaymentRef
+	}
+	order.Notes = input.Notes
+	if input.PaidAt != nil {
+		order.PaidAt = input.PaidAt
+	}
+	if input.StartsAt != nil {
+		order.StartsAt = input.StartsAt
+	}
+	if input.ExpiresAt != nil {
+		order.ExpiresAt = input.ExpiresAt
+	}
+
+	if err := s.subRepo.UpdateOrder(ctx, order); err != nil {
+		return nil, err
+	}
+
+	// When status changes to paid, activate the plan on the tenant
+	if order.Status == "paid" && prevStatus != "paid" {
+		plan, err := s.subRepo.FindPlanByID(ctx, order.PlanID)
+		if err == nil && plan != nil {
+			now := time.Now()
+			startsAt := now
+			expiresAt := startsAt.AddDate(0, order.DurationMonths, 0)
+			if order.StartsAt != nil {
+				startsAt = *order.StartsAt
+			}
+			if order.ExpiresAt != nil {
+				expiresAt = *order.ExpiresAt
+			}
+			_ = s.activatePlan(ctx, order.TenantID, plan, &startsAt, &expiresAt)
+		}
+	}
+
+	return order, nil
+}
+
+func (s *SubscriptionService) AdminCreateOrder(ctx context.Context, tenantID, planID string, durationMonths int) (*model.SubscriptionOrder, error) {
+	plan, err := s.subRepo.FindPlanByID(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil {
+		return nil, ErrPlanNotFound
+	}
+
+	now := time.Now()
+	order := &model.SubscriptionOrder{
+		ID:             id.New(),
+		TenantID:       tenantID,
+		PlanID:         planID,
+		PlanName:       plan.Name,
+		Amount:         plan.Price * int64(durationMonths),
+		DurationMonths: durationMonths,
+		Status:         "pending",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := s.subRepo.CreateOrder(ctx, order); err != nil {
+		return nil, err
+	}
+	return order, nil
+}
+
+func (s *SubscriptionService) AdminDeleteOrder(ctx context.Context, orderID string) error {
+	order, err := s.subRepo.FindOrderByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if order == nil {
+		return ErrOrderNotFound
+	}
+	return s.subRepo.DeleteOrder(ctx, orderID)
+}
+
 func (s *SubscriptionService) activatePlan(ctx context.Context, tenantID string, plan *model.SubscriptionPlan, startsAt *time.Time, expiresAt *time.Time) error {
 	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
 	if err != nil {
@@ -303,13 +424,14 @@ func (s *SubscriptionService) activatePlan(ctx context.Context, tenantID string,
 type SubPaymentResult struct {
 	OrderID    string     `json:"order_id"`
 	PaymentURL string     `json:"payment_url"`
+	SnapToken  string     `json:"snap_token,omitempty"`
 	ExpiredAt  *time.Time `json:"expired_at,omitempty"`
 }
 
 // CreatePayment generates a payment gateway transaction for a pending subscription order.
 func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenantID, returnURL string) (*SubPaymentResult, error) {
 	pgCfg := s.loadSAPGConfig(ctx)
-	if pgCfg == nil || pgCfg.APIKey == "" {
+	if pgCfg == nil || (pgCfg.APIKey == "" && pgCfg.SecretKey == "") {
 		return nil, errors.New("Payment gateway belum dikonfigurasi")
 	}
 
@@ -332,6 +454,7 @@ func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenant
 		return &SubPaymentResult{
 			OrderID:    order.ID,
 			PaymentURL: order.PaymentURL,
+			SnapToken:  order.SnapToken,
 		}, nil
 	}
 
@@ -408,6 +531,7 @@ func (s *SubscriptionService) createSubMidtransPayment(ctx context.Context, orde
 
 	order.PaymentURL = resp.RedirectURL
 	order.PaymentRef = merchantRef
+	order.SnapToken = resp.Token
 	if err := s.subRepo.UpdateOrder(ctx, order); err != nil {
 		return nil, err
 	}
@@ -415,6 +539,7 @@ func (s *SubscriptionService) createSubMidtransPayment(ctx context.Context, orde
 	return &SubPaymentResult{
 		OrderID:    order.ID,
 		PaymentURL: resp.RedirectURL,
+		SnapToken:  resp.Token,
 	}, nil
 }
 

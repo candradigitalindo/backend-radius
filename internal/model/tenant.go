@@ -12,11 +12,12 @@ type Tenant struct {
 	LogoURL       string     `json:"logo_url"`
 	Timezone      string     `json:"timezone"`
 	Currency      string     `json:"currency"`
-	BillingCycle        int    `json:"billing_cycle"`
-	DueDay              int    `json:"due_day"`
-	IsolirDay           int    `json:"isolir_day"`
-	GracePeriod         int    `json:"grace_period"`
-	DefaultBillingType  string `json:"default_billing_type"`
+	BillingCycle           int    `json:"billing_cycle"`
+	DueDay                 int    `json:"due_day"`
+	IsolirDay              int    `json:"isolir_day"`
+	GracePeriod            int    `json:"grace_period"`
+	DefaultBillingType     string `json:"default_billing_type"`
+	DefaultPaymentTiming   string `json:"default_payment_timing"` // "due_date" | "advance"
 	Plan          string     `json:"plan"`
 	PlanExpiresAt *time.Time `json:"plan_expires_at,omitempty"`
 	MaxCustomers  int        `json:"max_customers"`

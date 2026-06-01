@@ -21,9 +21,13 @@ type Customer struct {
 	RouterID        *string    `json:"router_id,omitempty"`
 	ODPPortID       *string    `json:"odp_port_id,omitempty"`
 	JoinDate        time.Time  `json:"join_date"`
-	BillingDate     int        `json:"billing_date"`
-	BillingType     string     `json:"billing_type"`
-	BillingDeadline int        `json:"billing_deadline"`
+	BillingDate              int        `json:"billing_date"`
+	BillingType              string     `json:"billing_type"`
+	BillingDeadline          int        `json:"billing_deadline"`
+	BillingProfileID         *string    `json:"billing_profile_id,omitempty"`
+	PendingBillingProfileID  *string    `json:"pending_billing_profile_id,omitempty"`
+	PreviousPackagePrice     int64      `json:"previous_package_price"`
+	PackageChangedAt         *time.Time `json:"package_changed_at,omitempty"`
 	CustomPrice     *int64     `json:"custom_price,omitempty"`
 	Discount        int64      `json:"discount"`
 	AdditionalFee   int64      `json:"additional_fee"`

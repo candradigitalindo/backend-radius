@@ -46,9 +46,9 @@ func (h *ReminderHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "nama, tipe, dan message_template wajib diisi"})
 	}
 
-	validTypes := map[string]bool{"before_due": true, "on_due": true, "after_due": true}
+	validTypes := map[string]bool{"before_due": true, "on_due": true, "after_due": true, "invoice_created": true, "payment_confirmation": true}
 	if !validTypes[req.Type] {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tipe harus before_due, on_due, atau after_due"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tipe tidak valid"})
 	}
 
 	reminder, err := h.reminderService.Create(c.Context(), service.CreateReminderInput{
@@ -94,9 +94,9 @@ func (h *ReminderHandler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "nama, tipe, dan message_template wajib diisi"})
 	}
 
-	validTypes := map[string]bool{"before_due": true, "on_due": true, "after_due": true}
+	validTypes := map[string]bool{"before_due": true, "on_due": true, "after_due": true, "invoice_created": true, "payment_confirmation": true}
 	if !validTypes[req.Type] {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tipe harus before_due, on_due, atau after_due"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tipe tidak valid"})
 	}
 
 	reminder, err := h.reminderService.Update(c.Context(), tenantID, reminderID, service.UpdateReminderInput{

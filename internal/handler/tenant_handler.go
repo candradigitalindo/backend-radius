@@ -16,16 +16,16 @@ import (
 var slugRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type TenantHandler struct {
-	tenantService *service.TenantService
-	webhookURLs   map[string]string
+	tenantService  *service.TenantService
+	webhookBaseURL string
 }
 
 func NewTenantHandler(tenantService *service.TenantService) *TenantHandler {
 	return &TenantHandler{tenantService: tenantService}
 }
 
-func (h *TenantHandler) WithWebhookURLs(urls map[string]string) *TenantHandler {
-	h.webhookURLs = urls
+func (h *TenantHandler) WithWebhookBaseURL(baseURL string) *TenantHandler {
+	h.webhookBaseURL = baseURL
 	return h
 }
 
@@ -48,19 +48,20 @@ type createTenantRequest struct {
 }
 
 type updateTenantRequest struct {
-	Name                string `json:"name"`
-	Email               string `json:"email"`
-	Phone               string `json:"phone"`
-	Address             string `json:"address"`
-	LogoURL             string `json:"logo_url"`
-	Timezone            string `json:"timezone"`
-	Currency            string `json:"currency"`
-	BillingCycle        int    `json:"billing_cycle"`
-	DueDay              int    `json:"due_day"`
-	IsolirDay           int    `json:"isolir_day"`
-	GracePeriod         int    `json:"grace_period"`
-	DefaultBillingType  string `json:"default_billing_type"`
-	IsActive            bool   `json:"is_active"`
+	Name                  string `json:"name"`
+	Email                 string `json:"email"`
+	Phone                 string `json:"phone"`
+	Address               string `json:"address"`
+	LogoURL               string `json:"logo_url"`
+	Timezone              string `json:"timezone"`
+	Currency              string `json:"currency"`
+	BillingCycle          int    `json:"billing_cycle"`
+	DueDay                int    `json:"due_day"`
+	IsolirDay             int    `json:"isolir_day"`
+	GracePeriod           int    `json:"grace_period"`
+	DefaultBillingType    string `json:"default_billing_type"`
+	DefaultPaymentTiming  string `json:"default_payment_timing"`
+	IsActive              bool   `json:"is_active"`
 }
 
 type updateSettingsRequest struct {
@@ -180,8 +181,9 @@ func (h *TenantHandler) Update(c *fiber.Ctx) error {
 		DueDay:              req.DueDay,
 		IsolirDay:           req.IsolirDay,
 		GracePeriod:         req.GracePeriod,
-		DefaultBillingType:  req.DefaultBillingType,
-		IsActive:            req.IsActive,
+		DefaultBillingType:   req.DefaultBillingType,
+		DefaultPaymentTiming: req.DefaultPaymentTiming,
+		IsActive:             req.IsActive,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrTenantNotFound) {
@@ -220,12 +222,36 @@ func (h *TenantHandler) UpdateSettings(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Pengaturan berhasil diperbarui"})
 }
 
-// TestPGConnection tests the payment gateway credentials configured for the current tenant.
-// Returns 200 OK with a success message if the connection is valid, or 400/500 with an error message.
+// testPGRequest holds credentials to test directly (without saving to DB first).
+type testPGRequest struct {
+	PGProvider   string `json:"pg_provider"`
+	PGAPIKey     string `json:"pg_api_key"`
+	PGSecretKey  string `json:"pg_secret_key"`
+	PGMerchantID string `json:"pg_merchant_id"`
+	PGSandbox    bool   `json:"pg_sandbox"`
+}
+
+// TestPGConnection tests the payment gateway credentials.
+// If the request body contains a pg_provider, those credentials are tested directly.
+// Otherwise the credentials stored in the database are used.
 func (h *TenantHandler) TestPGConnection(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 
-	if err := h.tenantService.TestPGConnection(c.Context(), tenantID); err != nil {
+	var req testPGRequest
+	_ = c.BodyParser(&req)
+
+	var override *service.PGCredentials
+	if req.PGProvider != "" {
+		override = &service.PGCredentials{
+			Provider:   req.PGProvider,
+			APIKey:     req.PGAPIKey,
+			SecretKey:  req.PGSecretKey,
+			MerchantID: req.PGMerchantID,
+			Sandbox:    req.PGSandbox,
+		}
+	}
+
+	if err := h.tenantService.TestPGConnection(c.Context(), tenantID, override); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"error":   err.Error(),
@@ -238,12 +264,29 @@ func (h *TenantHandler) TestPGConnection(c *fiber.Ctx) error {
 	})
 }
 
-// GetWebhookURLs returns the payment gateway callback URLs that the tenant
-// should register in their Tripay / Midtrans dashboard.
+// GetWebhookURLs returns the per-tenant payment gateway callback URLs that the
+// tenant should register in their Tripay / Midtrans / Xendit dashboard.
 func (h *TenantHandler) GetWebhookURLs(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	tenant, err := h.tenantService.GetByID(c.Context(), tenantID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat data tenant"})
+	}
+	slug := tenant.Slug
+	base := h.webhookBaseURL
 	return c.JSON(fiber.Map{
 		"success": true,
-		"data":    h.webhookURLs,
+		"data": map[string]string{
+			"tripay":                base + "/api/v1/webhooks/tripay/" + slug,
+			"midtrans":              base + "/api/v1/webhooks/midtrans/" + slug,
+			"xendit":                base + "/api/v1/webhooks/xendit/" + slug,
+			"tripay_voucher":        base + "/api/v1/webhooks/tripay/" + slug + "/voucher",
+			"midtrans_voucher":      base + "/api/v1/webhooks/midtrans/" + slug + "/voucher",
+			"xendit_voucher":        base + "/api/v1/webhooks/xendit/" + slug + "/voucher",
+			"tripay_subscription":   base + "/api/v1/webhooks/subscription/tripay",
+			"midtrans_subscription": base + "/api/v1/webhooks/subscription/midtrans",
+			"xendit_subscription":   base + "/api/v1/webhooks/subscription/xendit",
+		},
 	})
 }
 

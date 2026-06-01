@@ -14,10 +14,16 @@ import (
 
 type CustomerHandler struct {
 	customerService *service.CustomerService
+	invoiceService  *service.InvoiceService
 }
 
 func NewCustomerHandler(customerService *service.CustomerService) *CustomerHandler {
 	return &CustomerHandler{customerService: customerService}
+}
+
+func (h *CustomerHandler) WithInvoiceService(svc *service.InvoiceService) *CustomerHandler {
+	h.invoiceService = svc
+	return h
 }
 
 type createCustomerRequest struct {
@@ -33,9 +39,10 @@ type createCustomerRequest struct {
 	PackageID       *string  `json:"package_id"`
 	RouterID        *string  `json:"router_id"`
 	ODPPortID       *string  `json:"odp_port_id"`
-	JoinDate        string   `json:"join_date"`
-	BillingType     string   `json:"billing_type"`
-	CustomPrice     *int64   `json:"custom_price"`
+	JoinDate         string  `json:"join_date"`
+	BillingType      string  `json:"billing_type"`
+	BillingProfileID *string `json:"billing_profile_id"`
+	CustomPrice      *int64  `json:"custom_price"`
 	Discount        int64    `json:"discount"`
 	AdditionalFee   int64    `json:"additional_fee"`
 	FeeDescription  string   `json:"fee_description"`
@@ -69,15 +76,16 @@ type updateCustomerAccessRequest struct {
 }
 
 type updateCustomerServiceRequest struct {
-	PackageID      *string `json:"package_id"`
-	JoinDate       string  `json:"join_date"`
-	InvoiceDate    string  `json:"invoice_date"`
-	BillingDueDate string  `json:"billing_due_date"`
-	BillingType    string  `json:"billing_type"`
-	CustomPrice    *int64  `json:"custom_price"`
-	Discount       *int64  `json:"discount"`
-	AdditionalFee  *int64  `json:"additional_fee"`
-	FeeDescription string  `json:"fee_description"`
+	PackageID        *string `json:"package_id"`
+	BillingProfileID *string `json:"billing_profile_id"` // nil = tidak diubah
+	JoinDate         string  `json:"join_date"`
+	InvoiceDate      string  `json:"invoice_date"`
+	BillingDueDate   string  `json:"billing_due_date"`
+	BillingType      string  `json:"billing_type"`
+	CustomPrice      *int64  `json:"custom_price"`
+	Discount         *int64  `json:"discount"`
+	AdditionalFee    *int64  `json:"additional_fee"`
+	FeeDescription   string  `json:"fee_description"`
 }
 
 func (h *CustomerHandler) NextCode(c *fiber.Ctx) error {
@@ -117,6 +125,7 @@ func (h *CustomerHandler) Create(c *fiber.Ctx) error {
 		ODPPortID:        req.ODPPortID,
 		JoinDate:         req.JoinDate,
 		BillingType:      req.BillingType,
+		BillingProfileID: req.BillingProfileID,
 		CustomPrice:      req.CustomPrice,
 		Discount:         req.Discount,
 		AdditionalFee:    req.AdditionalFee,
@@ -209,33 +218,56 @@ func (h *CustomerHandler) UpdateService(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
 	}
 
+	// Ambil customer lama untuk kalkulasi prorata dan deteksi perubahan
+	oldCustomer, err := h.customerService.GetByID(c.Context(), tenantID, customerID)
+	if err != nil || oldCustomer == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Pelanggan tidak ditemukan"})
+	}
+
 	var joinDate *time.Time
 	if req.JoinDate != "" {
 		parsed, err := parseRequestDate(req.JoinDate)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format join_date tidak valid, gunakan YYYY-MM-DD atau RFC3339"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format join_date tidak valid"})
 		}
 		joinDate = &parsed
 	}
-
 	var invoiceDate *time.Time
 	if req.InvoiceDate != "" {
 		parsed, err := parseRequestDate(req.InvoiceDate)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format invoice_date tidak valid, gunakan YYYY-MM-DD atau RFC3339"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format invoice_date tidak valid"})
 		}
 		invoiceDate = &parsed
 	}
-
 	var billingDueDate *time.Time
 	if req.BillingDueDate != "" {
 		parsed, err := parseRequestDate(req.BillingDueDate)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format billing_due_date tidak valid, gunakan YYYY-MM-DD atau RFC3339"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format billing_due_date tidak valid"})
 		}
 		billingDueDate = &parsed
 	}
 
+	// 1. Tangani perubahan billing profile (harus sebelum UpdateServicePackage)
+	//    ChangeBillingProfile menangani logika pending vs langsung.
+	profileChanged := false
+	if req.BillingProfileID != nil && h.invoiceService != nil {
+		oldProfileID := ""
+		if oldCustomer.BillingProfileID != nil {
+			oldProfileID = *oldCustomer.BillingProfileID
+		}
+		newProfileID := *req.BillingProfileID
+		if newProfileID != oldProfileID {
+			if err := h.invoiceService.ChangeBillingProfile(c.Context(), tenantID, customerID, newProfileID); err != nil {
+				log.Printf("[handler] ChangeBillingProfile customer %s: %v", customerID, err)
+			} else {
+				profileChanged = true
+			}
+		}
+	}
+
+	// 2. Update data paket & tagihan
 	customer, err := h.customerService.UpdateServicePackage(c.Context(), tenantID, customerID, service.UpdateCustomerServiceInput{
 		PackageID:      req.PackageID,
 		JoinDate:       joinDate,
@@ -251,7 +283,50 @@ func (h *CustomerHandler) UpdateService(c *fiber.Ctx) error {
 		return h.handleError(c, err)
 	}
 
-	return c.JSON(customer)
+	// 3. Hitung prorata jika harga berubah dan ada invoice berjalan
+	var prorataAdjustment int64
+	if h.invoiceService != nil {
+		oldPrice := oldCustomer.CustomPrice
+		var oldPriceVal int64
+		if oldPrice != nil {
+			oldPriceVal = *oldPrice
+		} else if oldCustomer.Package != nil {
+			oldPriceVal = oldCustomer.Package.Price
+		}
+
+		newPriceVal := oldPriceVal
+		if req.CustomPrice != nil {
+			newPriceVal = *req.CustomPrice
+		} else if req.PackageID != nil && (oldCustomer.PackageID == nil || *req.PackageID != *oldCustomer.PackageID) {
+			// Paket berubah tapi tidak ada custom_price: harga baru akan diambil dari paket baru
+			// Kalkulasi prorata ditangani dengan price=0 (tidak ada prorata jika harga paket tidak diketahui di sini)
+			newPriceVal = 0
+		}
+
+		if oldPriceVal != newPriceVal && newPriceVal > 0 {
+			adj, err := h.invoiceService.ApplyProratedPackageChange(c.Context(), tenantID, customerID, oldPriceVal, newPriceVal, time.Now())
+			if err != nil {
+				log.Printf("[handler] prorata customer %s: %v", customerID, err)
+			} else {
+				prorataAdjustment = adj
+			}
+		}
+	}
+
+	resp := fiber.Map{"data": customer}
+	if prorataAdjustment != 0 {
+		resp["prorata_adjustment"] = prorataAdjustment
+		if prorataAdjustment > 0 {
+			resp["prorata_info"] = "Invoice periode berjalan ditambah penyesuaian upgrade paket"
+		} else {
+			resp["prorata_info"] = "Invoice periode berjalan dikurangi penyesuaian downgrade paket"
+		}
+	}
+	if profileChanged {
+		resp["billing_profile_info"] = "Profil billing baru akan berlaku mulai periode berikutnya jika ada invoice aktif"
+	}
+
+	return c.JSON(resp)
 }
 
 func parseRequestDate(value string) (time.Time, error) {

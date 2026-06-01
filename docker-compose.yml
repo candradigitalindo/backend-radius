@@ -58,6 +58,23 @@ services:
       - "1812:1812/udp"
       - "1813:1813/udp"
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: radius_worker
+    restart: unless-stopped
+    command: ["./worker"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+
   wa:
     build:
       context: ../wa-radius
@@ -81,7 +98,7 @@ services:
     container_name: radius_nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "3001:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/entrypoint.sh:/entrypoint.sh:ro

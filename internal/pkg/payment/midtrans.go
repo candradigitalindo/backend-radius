@@ -10,9 +10,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 )
+
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+func isValidEmail(email string) bool {
+	return email != "" && emailRegex.MatchString(email)
+}
 
 const (
 	midtransSnapURL    = "https://app.midtrans.com/snap/v1/transactions"
@@ -39,20 +46,21 @@ func NewMidtransClient(serverKey string, sandbox bool) *MidtransClient {
 	}
 }
 
-// TestConnection verifies that the Midtrans server key is valid by calling the payment methods endpoint.
-// Returns nil if the credentials are valid, or an error with a descriptive message.
+// TestConnection verifies that the Midtrans server key is valid.
+// Calls GET /v2/TEST-ORDER-ID/status — this endpoint always returns 404 for a
+// non-existent order but returns 401 when the server key is invalid.
+// Therefore: 401 = bad key, anything else = key accepted.
 func (c *MidtransClient) TestConnection(ctx context.Context) error {
-	// Use Midtrans Core API status endpoint — a lightweight authenticated call
-	statusURL := "https://api.midtrans.com/v2/payment-types"
+	baseAPI := "https://api.midtrans.com"
 	if c.baseURL == midtransSnapURLDev {
-		statusURL = "https://api.sandbox.midtrans.com/v2/payment-types"
+		baseAPI = "https://api.sandbox.midtrans.com"
 	}
+	statusURL := baseAPI + "/v2/TEST-CREDENTIAL-CHECK/status"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
 	if err != nil {
 		return err
 	}
-	// Midtrans uses HTTP Basic Auth: server_key as username, empty password
 	req.SetBasicAuth(c.serverKey, "")
 
 	resp, err := c.httpClient.Do(req)
@@ -61,12 +69,12 @@ func (c *MidtransClient) TestConnection(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
+	// 401 = server key tidak valid
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("Midtrans: Server Key tidak valid (401 Unauthorized)")
 	}
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("Midtrans: server merespons dengan status %d", resp.StatusCode)
-	}
+	// 404 = order tidak ditemukan tapi key diterima → credentials valid
+	// Status lain (200, 404, 400) berarti autentikasi berhasil
 	return nil
 }
 
@@ -104,6 +112,11 @@ type MidtransNotification struct {
 
 // CreateTransaction creates a Midtrans Snap transaction and returns the payment token and URL.
 func (c *MidtransClient) CreateTransaction(ctx context.Context, req MidtransCreateRequest) (*MidtransCreateResponse, error) {
+	email := req.Email
+	if !isValidEmail(email) {
+		email = "noreply@placeholder.invalid"
+	}
+
 	body := map[string]interface{}{
 		"transaction_details": map[string]interface{}{
 			"order_id":     req.OrderID,
@@ -111,7 +124,7 @@ func (c *MidtransClient) CreateTransaction(ctx context.Context, req MidtransCrea
 		},
 		"customer_details": map[string]interface{}{
 			"first_name": req.FirstName,
-			"email":      req.Email,
+			"email":      email,
 			"phone":      req.Phone,
 		},
 		"item_details": []map[string]interface{}{

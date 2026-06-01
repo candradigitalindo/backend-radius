@@ -25,11 +25,20 @@ type InvoiceRepository interface {
 	List(ctx context.Context, tenantID string, filter InvoiceFilter) ([]model.Invoice, int, error)
 	ListByCustomer(ctx context.Context, tenantID, customerID string, page, perPage int) ([]model.Invoice, int, error)
 	ListUnpaidDue(ctx context.Context, tenantID string, dueDate string) ([]model.Invoice, error)
-	ListOverdueForIsolir(ctx context.Context, tenantID string, cutoffDate string) ([]model.Invoice, error)
+	// ListOverdueForIsolir returns unpaid invoices that are past their isolation threshold.
+	// defaultIsolirDay is the tenant-level fallback (days after due date) used when the
+	// customer has no billing profile. Per-customer billing_profiles.isolir_day takes priority.
+	ListOverdueForIsolir(ctx context.Context, tenantID string, defaultIsolirDay int) ([]model.Invoice, error)
+
+	// ListIsolatedGraceExpired returns isolated customers whose grace period has elapsed.
+	// defaultGracePeriod is used when the customer has no billing profile.
+	// Returns customer IDs that should receive grace-expired notification or action.
+	ListIsolatedGraceExpired(ctx context.Context, tenantID string, defaultGracePeriod int) ([]string, error)
 	CreateBatch(ctx context.Context, invoices []model.Invoice) error
 	HasUnpaidInvoice(ctx context.Context, tenantID, customerID string) (bool, error)
 	FindLastPaidInvoice(ctx context.Context, tenantID, customerID string) (*model.Invoice, error)
 	CountPaidInvoices(ctx context.Context, tenantID, customerID string) (int, error)
+	NextDailySeq(ctx context.Context, tenantID, datePrefix string) (int, error)
 }
 
 type InvoiceFilter struct {
@@ -401,7 +410,10 @@ func (r *invoiceRepository) ListUnpaidDue(ctx context.Context, tenantID string, 
 	return invoices, nil
 }
 
-func (r *invoiceRepository) ListOverdueForIsolir(ctx context.Context, tenantID string, cutoffDate string) ([]model.Invoice, error) {
+func (r *invoiceRepository) ListOverdueForIsolir(ctx context.Context, tenantID string, defaultIsolirDay int) ([]model.Invoice, error) {
+	// Join billing_profiles to use per-customer isolir_day when available.
+	// COALESCE(bp.isolir_day, $2) → profile isolir_day if customer has a profile, else tenant default.
+	// Condition: due_date + isolir_day days <= today  →  customer should be isolated.
 	rows, err := r.db.Query(ctx, `
 		SELECT DISTINCT ON (i.customer_id)
 		       i.id, i.tenant_id, i.customer_id, i.invoice_number, i.period_month, i.period_year,
@@ -411,10 +423,13 @@ func (r *invoiceRepository) ListOverdueForIsolir(ctx context.Context, tenantID s
 		       c.name, c.customer_code, COALESCE(c.phone,''), c.status
 		FROM invoices i
 		JOIN customers c ON c.id = i.customer_id
-		WHERE i.tenant_id = $1 AND i.status = 'unpaid' AND i.due_date::date <= $2::date
+		LEFT JOIN billing_profiles bp ON c.billing_profile_id = bp.id
+		WHERE i.tenant_id = $1
+		  AND i.status = 'unpaid'
 		  AND c.status = 'active'
+		  AND i.due_date::date + COALESCE(bp.isolir_day, $2)::int <= CURRENT_DATE
 		ORDER BY i.customer_id, i.due_date ASC
-	`, tenantID, cutoffDate)
+	`, tenantID, defaultIsolirDay)
 	if err != nil {
 		return nil, err
 	}
@@ -516,4 +531,49 @@ func (r *invoiceRepository) CountPaidInvoices(ctx context.Context, tenantID, cus
 		tenantID, customerID,
 	).Scan(&count)
 	return count, err
+}
+
+func (r *invoiceRepository) NextDailySeq(ctx context.Context, tenantID, datePrefix string) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM invoices
+		WHERE tenant_id = $1 AND invoice_number LIKE $2
+	`, tenantID, datePrefix+"%").Scan(&count)
+	return count + 1, err
+}
+
+// ListIsolatedGraceExpired returns customer IDs that:
+//  - status = 'isolated'
+//  - isolated_at + grace_period <= today (grace period has elapsed)
+//  - still have unpaid invoice
+//
+// Uses billing_profiles.grace_period per customer; falls back to $2 (tenant default).
+func (r *invoiceRepository) ListIsolatedGraceExpired(ctx context.Context, tenantID string, defaultGracePeriod int) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT c.id
+		FROM customers c
+		LEFT JOIN billing_profiles bp ON c.billing_profile_id = bp.id
+		WHERE c.tenant_id = $1
+		  AND c.status = 'isolated'
+		  AND c.isolated_at IS NOT NULL
+		  AND c.isolated_at::date + COALESCE(bp.grace_period, $2)::int <= CURRENT_DATE
+		  AND EXISTS (
+		      SELECT 1 FROM invoices i
+		      WHERE i.customer_id = c.id AND i.tenant_id = $1 AND i.status = 'unpaid'
+		  )
+	`, tenantID, defaultGracePeriod)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

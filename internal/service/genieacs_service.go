@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/pkg/genieacs"
+	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 )
 
@@ -22,10 +25,22 @@ type GenieACSService struct {
 	client       *genieacs.Client
 	ontRepo      repository.ONTRepository
 	customerRepo repository.CustomerRepository
+	waClient     *whatsapp.Client
+	settingRepo  repository.SettingRepository
 }
 
 func NewGenieACSService(client *genieacs.Client, ontRepo repository.ONTRepository, customerRepo repository.CustomerRepository) *GenieACSService {
 	return &GenieACSService{client: client, ontRepo: ontRepo, customerRepo: customerRepo}
+}
+
+func (s *GenieACSService) WithWAClient(wa *whatsapp.Client) *GenieACSService {
+	s.waClient = wa
+	return s
+}
+
+func (s *GenieACSService) WithSettingRepo(r repository.SettingRepository) *GenieACSService {
+	s.settingRepo = r
+	return s
 }
 
 // DeviceInfo holds relevant info from a GenieACS-managed device.
@@ -280,6 +295,14 @@ func (s *GenieACSService) ProvisionONT(ctx context.Context, tenantID, ontID stri
 		}
 	}
 
+	// Auto-set WiFi SSID/password from customer data (if not already configured)
+	defaultSSID, defaultPass := s.buildDefaultWiFi(ont)
+	if defaultSSID != "" {
+		if _, werr := s.client.SetParameterValues(ctx, device.ID, buildWiFiParams(defaultSSID, defaultPass, "11i")); werr == nil {
+			updateLastKnownWiFiFromSetRequest(ont, defaultSSID, defaultPass, "11i")
+		}
+	}
+
 	// Refresh all device data from TR-069
 	if _, err = s.client.RefreshObject(ctx, device.ID, "InternetGatewayDevice."); err != nil {
 		return fmt.Errorf("genieacs provision refresh: %w", err)
@@ -292,6 +315,75 @@ func (s *GenieACSService) ProvisionONT(ctx context.Context, tenantID, ontID stri
 		return fmt.Errorf("genieacs provision save: %w", err)
 	}
 
+	// Notify customer via WA with WiFi credentials
+	if defaultSSID != "" && ont.Customer != nil {
+		go s.sendWiFiCredentialsWA(context.Background(), ont.TenantID, ont.Customer, defaultSSID, defaultPass)
+	}
+
+	return nil
+}
+
+// buildDefaultWiFi generates SSID from customer_code and a random 10-char password.
+// Returns empty strings if customer is not linked.
+func (s *GenieACSService) buildDefaultWiFi(ont *model.ONT) (ssid, password string) {
+	if ont.Customer == nil || ont.Customer.CustomerCode == "" {
+		return "", ""
+	}
+	// SSID = customer code (max 32 chars, WPA limit)
+	ssid = ont.Customer.CustomerCode
+	if len(ssid) > 32 {
+		ssid = ssid[:32]
+	}
+	// If already has a cached password, keep it
+	if ont.LastKnownWiFiPassword != nil && *ont.LastKnownWiFiPassword != "" {
+		return ssid, *ont.LastKnownWiFiPassword
+	}
+	// Generate a random 10-char alphanumeric password
+	const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+	b := make([]byte, 10)
+	for i := range b {
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		b[i] = chars[n.Int64()]
+	}
+	return ssid, string(b)
+}
+
+// sendWiFiCredentialsWA sends WiFi SSID and password to the customer via WhatsApp.
+func (s *GenieACSService) sendWiFiCredentialsWA(ctx context.Context, tenantID string, customer *model.Customer, ssid, password string) {
+	if s.waClient == nil || customer == nil || customer.Phone == "" {
+		return
+	}
+	msg := fmt.Sprintf(
+		"Selamat datang, %s!\n\nPerangkat WiFi Anda telah aktif:\n📶 Nama WiFi (SSID): *%s*\n🔑 Password: *%s*\n\nSilakan ubah password melalui portal pelanggan sesuai keinginan Anda.",
+		customer.Name, ssid, password,
+	)
+	session := WASessionForTenant(ctx, tenantID, s.settingRepo)
+	if _, err := s.waClient.SendMessage(ctx, session, customer.Phone, msg); err != nil {
+		fmt.Printf("[genieacs] WA WiFi notify failed for %s: %v\n", customer.CustomerCode, err)
+	}
+}
+
+// DeprovisionONT resets device configuration when an ONT is unlinked from a customer.
+// Removes tenant tag and resets WiFi to prevent the new customer from using old credentials.
+func (s *GenieACSService) DeprovisionONT(ctx context.Context, tenantID, ontID string) error {
+	ont, err := s.ontRepo.FindByID(ctx, tenantID, ontID)
+	if err != nil || ont == nil {
+		return nil // already gone, nothing to do
+	}
+	device, err := s.client.FindDeviceBySerialNumber(ctx, ont.SerialNumber)
+	if err != nil || device == nil {
+		return nil
+	}
+	// Remove tenant tag
+	_ = s.client.RemoveTag(ctx, device.ID, "tenant:"+tenantID)
+	// Reset WiFi to a blank/random state so old credentials are gone
+	newPass := "changeme" // placeholder — customer will set via portal
+	_ = s.SetWiFiSSID(ctx, tenantID, ontID, ont.SerialNumber[:8], newPass, "11i")
+	// Clear cached WiFi in DB
+	ont.LastKnownWiFiSSID = nil
+	ont.LastKnownWiFiPassword = nil
+	ont.LastKnownWiFiSource = nil
+	_ = s.ontRepo.Update(ctx, ont)
 	return nil
 }
 

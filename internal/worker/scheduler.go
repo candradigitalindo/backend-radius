@@ -14,6 +14,7 @@ import (
 type SchedulerConfig struct {
 	InvoiceCron        string
 	IsolirCron         string
+	GracePeriodCron    string
 	ReminderCron       string
 	ExpirePayCron      string
 	RouterMonitorCron  string
@@ -37,6 +38,14 @@ func SetupScheduler(scheduler *asynq.Scheduler, tenantRepo repository.TenantRepo
 
 	if _, err := scheduler.Register(cfg.IsolirCron, asynq.NewTask("scheduler:auto_isolir_all", nil)); err != nil {
 		return fmt.Errorf("register isolir scheduler: %w", err)
+	}
+
+	gracePeriodCron := cfg.GracePeriodCron
+	if gracePeriodCron == "" {
+		gracePeriodCron = "0 9 * * *" // default: daily 09:00 (setelah isolir cron jam 06:00)
+	}
+	if _, err := scheduler.Register(gracePeriodCron, asynq.NewTask("scheduler:grace_period_check_all", nil)); err != nil {
+		return fmt.Errorf("register grace-period scheduler: %w", err)
 	}
 
 	if _, err := scheduler.Register(cfg.ReminderCron, asynq.NewTask("scheduler:trigger_reminders_all", nil)); err != nil {
@@ -112,6 +121,12 @@ func RegisterSchedulerHandlers(mux *asynq.ServeMux, tenantRepo repository.Tenant
 	mux.HandleFunc("scheduler:trigger_reminders_all", func(ctx context.Context, t *asynq.Task) error {
 		return enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
 			return NewTriggerRemindersTask(TriggerRemindersPayload{TenantID: tenantID})
+		})
+	})
+
+	mux.HandleFunc("scheduler:grace_period_check_all", func(ctx context.Context, t *asynq.Task) error {
+		return enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, _, _ int) (*asynq.Task, error) {
+			return NewGracePeriodCheckTask(GracePeriodCheckPayload{TenantID: tenantID})
 		})
 	})
 

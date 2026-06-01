@@ -88,30 +88,31 @@ func (s *CustomerService) WithCWMPPort(port string) *CustomerService {
 }
 
 type CreateCustomerInput struct {
-	TenantID        string
-	Name            string
-	NIK             string
-	Phone           string
-	Email           string
-	Address         string
-	Latitude        *float64
-	Longitude       *float64
-	ConnectionType  string
-	IPAddress       string
-	PackageID       *string
-	RouterID        *string
-	ODPPortID       *string
-	JoinDate        string
-	BillingType     string
-	CustomPrice     *int64
-	Discount        int64
-	AdditionalFee   int64
-	FeeDescription  string
-	Notes           string
-	SerialNumber string
-	ONTVendor    *string
-	ONTModel     *string
-	ReferralCodeUsed string // kode referral yang digunakan saat mendaftar
+	TenantID         string
+	Name             string
+	NIK              string
+	Phone            string
+	Email            string
+	Address          string
+	Latitude         *float64
+	Longitude        *float64
+	ConnectionType   string
+	IPAddress        string
+	PackageID        *string
+	RouterID         *string
+	ODPPortID        *string
+	JoinDate         string
+	BillingType      string
+	BillingProfileID *string
+	CustomPrice      *int64
+	Discount         int64
+	AdditionalFee    int64
+	FeeDescription   string
+	Notes            string
+	SerialNumber     string
+	ONTVendor        *string
+	ONTModel         *string
+	ReferralCodeUsed string
 }
 
 
@@ -136,15 +137,16 @@ type UpdateCustomerAccessInput struct {
 }
 
 type UpdateCustomerServiceInput struct {
-	PackageID       *string
-	JoinDate        *time.Time
-	InvoiceDate     *time.Time
-	BillingDueDate  *time.Time
-	BillingType     string
-	CustomPrice     *int64
-	Discount        *int64
-	AdditionalFee   *int64
-	FeeDescription  string
+	PackageID        *string
+	BillingProfileID *string // nil = tidak diubah, "" = hapus profil
+	JoinDate         *time.Time
+	InvoiceDate      *time.Time
+	BillingDueDate   *time.Time
+	BillingType      string
+	CustomPrice      *int64
+	Discount         *int64
+	AdditionalFee    *int64
+	FeeDescription   string
 }
 
 func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput) (*model.Customer, error) {
@@ -224,10 +226,11 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 		RouterID:        input.RouterID,
 		ODPPortID:       input.ODPPortID,
 		JoinDate:        joinDate,
-		BillingDate:     billingDate,
-		BillingType:     input.BillingType,
-		BillingDeadline: billingDeadline,
-		CustomPrice:     input.CustomPrice,
+		BillingDate:      billingDate,
+		BillingType:      input.BillingType,
+		BillingDeadline:  billingDeadline,
+		BillingProfileID: input.BillingProfileID,
+		CustomPrice:      input.CustomPrice,
 		Discount:        input.Discount,
 		AdditionalFee:   input.AdditionalFee,
 		FeeDescription:  input.FeeDescription,
@@ -615,6 +618,8 @@ func (s *CustomerService) UpdateServicePackage(ctx context.Context, tenantID, cu
 	if input.Discount != nil { customer.Discount = *input.Discount }
 	if input.AdditionalFee != nil { customer.AdditionalFee = *input.AdditionalFee }
 	if input.FeeDescription != "" { customer.FeeDescription = input.FeeDescription }
+	// BillingProfileID: diset langsung di sini HANYA jika bukan dari ChangeBillingProfile
+	// (ChangeBillingProfile menangani pending logic sendiri dan tidak masuk ke sini)
 
 	if err := s.customerRepo.Update(ctx, customer); err != nil {
 		return nil, err

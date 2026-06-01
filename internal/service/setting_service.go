@@ -15,6 +15,12 @@ var (
 	ErrSettingValueLimit = errors.New("Nilai pengaturan terlalu panjang")
 )
 
+// defaultSettingValues holds the default value returned when a key exists in the
+// allowlist but has not been saved to the database yet.
+var defaultSettingValues = map[string]string{
+	"wa_notification_sender": "own",
+}
+
 // allowedSettingKeys whitelist of valid setting keys.
 var allowedSettingKeys = map[string]bool{
 	"billing_auto_generate_invoice": true,
@@ -80,6 +86,9 @@ func (s *SettingService) Get(ctx context.Context, tenantID, key string) (*model.
 		return nil, err
 	}
 	if setting == nil {
+		if defaultVal, ok := defaultSettingValues[key]; ok {
+			return &model.Setting{TenantID: tenantID, Key: key, Value: defaultVal}, nil
+		}
 		return nil, ErrSettingNotFound
 	}
 	return setting, nil

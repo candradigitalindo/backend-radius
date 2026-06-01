@@ -77,16 +77,18 @@ func (r *customerRepository) Create(ctx context.Context, customer *model.Custome
 			id, tenant_id, customer_code, name, nik, phone, email, address,
 			latitude, longitude, connection_type, pppoe_username, pppoe_password,
 			ip_address, package_id, router_id, odp_port_id, join_date, billing_date,
-			billing_type, billing_deadline,
+			billing_type, billing_deadline, billing_profile_id,
+			pending_billing_profile_id, previous_package_price, package_changed_at,
 			custom_price, discount, additional_fee, fee_description, status, notes,
 			referral_code, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13,
 			$14, $15, $16, $17, $18, $19,
-			$20, $21,
-			$22, $23, $24, $25, $26, $27,
-			$28, $29, $30
+			$20, $21, $22,
+			$23, $24, $25,
+			$26, $27, $28, $29, $30, $31,
+			$32, $33, $34
 		)
 	`
 
@@ -97,7 +99,8 @@ func (r *customerRepository) Create(ctx context.Context, customer *model.Custome
 		customer.PPPoEUsername, customer.PPPoEPassword,
 		customer.IPAddress, customer.PackageID, customer.RouterID, customer.ODPPortID,
 		customer.JoinDate, customer.BillingDate,
-		customer.BillingType, customer.BillingDeadline,
+		customer.BillingType, customer.BillingDeadline, customer.BillingProfileID,
+		customer.PendingBillingProfileID, customer.PreviousPackagePrice, customer.PackageChangedAt,
 		customer.CustomPrice, customer.Discount, customer.AdditionalFee,
 		customer.FeeDescription, customer.Status, customer.Notes,
 		customer.ReferralCode,
@@ -112,7 +115,8 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		       COALESCE(c.address,''), c.latitude, c.longitude,
 		       c.connection_type, COALESCE(c.pppoe_username,''), COALESCE(c.pppoe_password,''), COALESCE(c.ip_address,''),
 		       c.package_id, c.router_id, c.odp_port_id, c.join_date, c.billing_date,
-		       COALESCE(c.billing_type,'fixed'), COALESCE(c.billing_deadline,20),
+		       COALESCE(c.billing_type,'fixed'), COALESCE(c.billing_deadline,20), c.billing_profile_id,
+		       c.pending_billing_profile_id, COALESCE(c.previous_package_price,0), c.package_changed_at,
 		       c.custom_price, c.discount, c.additional_fee, COALESCE(c.fee_description,''),
 		       c.status, c.isolated_at, COALESCE(c.notes,''), COALESCE(c.password_hash,''),
 		       COALESCE(c.referral_code,''), c.created_at, c.updated_at,
@@ -141,7 +145,8 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		&c.Address, &c.Latitude, &c.Longitude,
 		&c.ConnectionType, &c.PPPoEUsername, &c.PPPoEPassword, &c.IPAddress,
 		&pkgID, &rtID, &odpPortID, &c.JoinDate, &c.BillingDate,
-		&c.BillingType, &c.BillingDeadline,
+		&c.BillingType, &c.BillingDeadline, &c.BillingProfileID,
+		&c.PendingBillingProfileID, &c.PreviousPackagePrice, &c.PackageChangedAt,
 		&c.CustomPrice, &c.Discount, &c.AdditionalFee, &c.FeeDescription,
 		&c.Status, &c.IsolatedAt, &c.Notes, &c.PasswordHash,
 		&c.ReferralCode, &c.CreatedAt, &c.UpdatedAt,
@@ -198,10 +203,12 @@ func (r *customerRepository) Update(ctx context.Context, customer *model.Custome
 			pppoe_username = $10, pppoe_password = $11, ip_address = $12,
 			package_id = $13, router_id = $14, odp_port_id = $15,
 			join_date = $16, billing_date = $17, billing_type = $18, billing_deadline = $19,
-			custom_price = $20, discount = $21,
-			additional_fee = $22, fee_description = $23, notes = $24,
-			updated_at = $25
-		WHERE id = $26 AND tenant_id = $27
+			billing_profile_id = $20, pending_billing_profile_id = $21,
+			previous_package_price = $22, package_changed_at = $23,
+			custom_price = $24, discount = $25,
+			additional_fee = $26, fee_description = $27, notes = $28,
+			updated_at = $29
+		WHERE id = $30 AND tenant_id = $31
 	`
 	_, err := r.db.Exec(ctx, query,
 		customer.CustomerCode, customer.Name, customer.NIK, customer.Phone, customer.Email, customer.Address,
@@ -209,6 +216,8 @@ func (r *customerRepository) Update(ctx context.Context, customer *model.Custome
 		customer.PPPoEUsername, customer.PPPoEPassword, customer.IPAddress,
 		customer.PackageID, customer.RouterID, customer.ODPPortID,
 		customer.JoinDate, customer.BillingDate, customer.BillingType, customer.BillingDeadline,
+		customer.BillingProfileID, customer.PendingBillingProfileID,
+		customer.PreviousPackagePrice, customer.PackageChangedAt,
 		customer.CustomPrice, customer.Discount,
 		customer.AdditionalFee, customer.FeeDescription, customer.Notes,
 		customer.UpdatedAt,
@@ -266,7 +275,8 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 		       COALESCE(c.address,''), c.latitude, c.longitude,
 		       c.connection_type, COALESCE(c.pppoe_username,''), COALESCE(c.pppoe_password,''), COALESCE(c.ip_address,''),
 		       c.package_id, c.router_id, c.odp_port_id, c.join_date, c.billing_date,
-		       COALESCE(c.billing_type,'fixed'), COALESCE(c.billing_deadline,20),
+		       COALESCE(c.billing_type,'fixed'), COALESCE(c.billing_deadline,20), c.billing_profile_id,
+		       c.pending_billing_profile_id, COALESCE(c.previous_package_price,0), c.package_changed_at,
 		       c.custom_price, c.discount, c.additional_fee, COALESCE(c.fee_description,''),
 		       c.status, c.isolated_at, COALESCE(c.notes,''), c.created_at, c.updated_at,
 		       p.id, p.name, p.bandwidth_up, p.bandwidth_down, p.price,
@@ -303,7 +313,8 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 			&c.Address, &c.Latitude, &c.Longitude,
 			&c.ConnectionType, &c.PPPoEUsername, &c.PPPoEPassword, &c.IPAddress,
 			&pkgID, &rtID, &odpPortID, &c.JoinDate, &c.BillingDate,
-			&c.BillingType, &c.BillingDeadline,
+			&c.BillingType, &c.BillingDeadline, &c.BillingProfileID,
+			&c.PendingBillingProfileID, &c.PreviousPackagePrice, &c.PackageChangedAt,
 			&c.CustomPrice, &c.Discount, &c.AdditionalFee, &c.FeeDescription,
 			&c.Status, &c.IsolatedAt, &c.Notes, &c.CreatedAt, &c.UpdatedAt,
 			&pkgJoinID, &pkgName, &pkgBandwidthUp, &pkgBandwidthDown, &pkgPrice,

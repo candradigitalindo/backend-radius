@@ -32,6 +32,7 @@ type SubscriptionOrder struct {
 	PaymentMethod  string     `json:"payment_method"`
 	PaymentURL     string     `json:"payment_url"`
 	PaymentRef     string     `json:"payment_ref"`
+	SnapToken      string     `json:"snap_token,omitempty"`
 	PaidAt         *time.Time `json:"paid_at,omitempty"`
 	StartsAt       *time.Time `json:"starts_at,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`

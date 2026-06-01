@@ -17,20 +17,30 @@ import (
 	"github.com/candrasyahputra/radius-server/internal/pkg/token"
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/repository"
+	"github.com/candrasyahputra/radius-server/internal/service"
 )
 
 // PortalHandler serves customer portal web endpoints.
 // Customer authentication is fully separated from the staff/admin users table.
 type PortalHandler struct {
-	customerRepo repository.CustomerRepository
-	invoiceRepo  repository.InvoiceRepository
-	ticketRepo   repository.TicketRepository
-	paymentRepo  repository.PaymentRepository
-	tenantRepo   repository.TenantRepository
-	reminderRepo repository.ReminderRepository
-	tokenManager *token.Manager
-	redis        *redis.Client
-	waClient     *whatsapp.Client
+	customerRepo  repository.CustomerRepository
+	invoiceRepo   repository.InvoiceRepository
+	ticketRepo    repository.TicketRepository
+	paymentRepo   repository.PaymentRepository
+	tenantRepo    repository.TenantRepository
+	reminderRepo  repository.ReminderRepository
+	ontRepo       repository.ONTRepository
+	genieacsSvc   GenieACSProvisioner
+	tokenManager  *token.Manager
+	redis         *redis.Client
+	waClient      *whatsapp.Client
+}
+
+// GenieACSProvisioner is a minimal interface for portal device management.
+type GenieACSProvisioner interface {
+	GetDeviceStatus(ctx context.Context, tenantID, ontID string) (*service.DeviceInfo, error)
+	SetWiFiSSID(ctx context.Context, tenantID, ontID, ssid, password, security string) error
+	RebootDevice(ctx context.Context, tenantID, ontID string) error
 }
 
 func NewPortalHandler(
@@ -56,6 +66,90 @@ func (h *PortalHandler) WithResetDeps(rdb *redis.Client, wa *whatsapp.Client) *P
 	h.redis = rdb
 	h.waClient = wa
 	return h
+}
+
+// WithDeviceService injects ONT repo and GenieACS service for portal device endpoints.
+func (h *PortalHandler) WithDeviceService(ontRepo repository.ONTRepository, genie GenieACSProvisioner) *PortalHandler {
+	h.ontRepo = ontRepo
+	h.genieacsSvc = genie
+	return h
+}
+
+// GetDevice returns the customer's ONT status including WiFi info and connected hosts.
+func (h *PortalHandler) GetDevice(c *fiber.Ctx) error {
+	customer, err := h.resolveCustomer(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Data pelanggan tidak ditemukan"})
+	}
+	if h.ontRepo == nil {
+		return c.JSON(fiber.Map{"data": nil})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+	ont, err := h.ontRepo.FindByCustomerID(c.Context(), tenantID, customer.ID)
+	if err != nil || ont == nil {
+		return c.JSON(fiber.Map{"data": nil})
+	}
+	if h.genieacsSvc == nil {
+		return c.JSON(fiber.Map{"data": ont})
+	}
+	status, err := h.genieacsSvc.GetDeviceStatus(c.Context(), tenantID, ont.ID)
+	if err != nil || status == nil {
+		return c.JSON(fiber.Map{"data": ont})
+	}
+	return c.JSON(fiber.Map{"data": ont, "status": status})
+}
+
+// SetDeviceWiFi allows a customer to change their WiFi SSID and password.
+func (h *PortalHandler) SetDeviceWiFi(c *fiber.Ctx) error {
+	customer, err := h.resolveCustomer(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Data pelanggan tidak ditemukan"})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	var req struct {
+		SSID     string `json:"ssid"`
+		Password string `json:"password"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+	if req.SSID == "" || len(req.Password) < 8 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "SSID wajib diisi dan password minimal 8 karakter"})
+	}
+
+	ont, err := h.ontRepo.FindByCustomerID(c.Context(), tenantID, customer.ID)
+	if err != nil || ont == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Perangkat tidak ditemukan"})
+	}
+	if h.genieacsSvc == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Layanan perangkat tidak tersedia"})
+	}
+	if err := h.genieacsSvc.SetWiFiSSID(c.Context(), tenantID, ont.ID, req.SSID, req.Password, "11i"); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengubah WiFi: " + err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "Pengaturan WiFi berhasil diperbarui"})
+}
+
+// RebootDevice allows a customer to restart their ONT/router.
+func (h *PortalHandler) RebootDevice(c *fiber.Ctx) error {
+	customer, err := h.resolveCustomer(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Data pelanggan tidak ditemukan"})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	ont, err := h.ontRepo.FindByCustomerID(c.Context(), tenantID, customer.ID)
+	if err != nil || ont == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Perangkat tidak ditemukan"})
+	}
+	if h.genieacsSvc == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Layanan perangkat tidak tersedia"})
+	}
+	if err := h.genieacsSvc.RebootDevice(c.Context(), tenantID, ont.ID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal merestart perangkat: " + err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "Perangkat sedang direstart, mohon tunggu beberapa saat"})
 }
 
 func (h *PortalHandler) WithReminderRepo(repo repository.ReminderRepository) *PortalHandler {

@@ -211,7 +211,9 @@ func (s *RouterService) RegenerateToken(ctx context.Context, tenantID, routerID 
 	return token, nil
 }
 
-func (s *RouterService) Heartbeat(ctx context.Context, token string, info repository.HeartbeatInfo) error {
+// Heartbeat processes a heartbeat from a router.
+// senderIP is the IP address of the request sender — saved as nas_ip for Direct mode CoA routing.
+func (s *RouterService) Heartbeat(ctx context.Context, token string, info repository.HeartbeatInfo, senderIP string) error {
 	router, err := s.routerRepo.FindByHeartbeatToken(ctx, token)
 	if err != nil {
 		return err
@@ -225,8 +227,14 @@ func (s *RouterService) Heartbeat(ctx context.Context, token string, info reposi
 		return err
 	}
 
+	// Always update nas_ip from heartbeat sender — WAN IP can change dynamically
+	// (PPPoE reconnect, DHCP). This keeps CoA routing accurate.
+	if senderIP != "" {
+		_ = s.routerRepo.UpdateNASIP(ctx, router.ID, senderIP)
+	}
+
 	if wasOffline {
-		var endpoint string
+		endpoint := senderIP
 		if s.vpnManager != nil && s.vpnManager.IsAvailable() && router.VPNIP != "" {
 			if status, err := s.vpnManager.GetPeerStatus(router.VPNIP); err == nil && status.Endpoint != "" {
 				endpoint = status.Endpoint
@@ -535,6 +543,7 @@ func (s *RouterService) RegisterVPNKey(ctx context.Context, tenantID, routerID, 
 		return nil, fmt.Errorf("gagal menambahkan WireGuard peer: %w", err)
 	}
 	router.VPNPublicKey = publicKey
+	router.NASIP = "" // clear nas_ip — router now uses WireGuard, prevent stale CoA misrouting
 	if err := s.routerRepo.Update(ctx, router); err != nil {
 		_ = s.vpnManager.RemovePeer(publicKey)
 		return nil, err

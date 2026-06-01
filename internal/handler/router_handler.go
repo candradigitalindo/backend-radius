@@ -203,6 +203,9 @@ func (h *RouterHandler) Heartbeat(c *fiber.Ctx) error {
 	if req.Token == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Token wajib diisi"})
 	}
+	// c.IP() already returns just the IP without port
+	senderIP := strings.TrimSpace(c.IP())
+
 	err := h.routerService.Heartbeat(c.Context(), req.Token, repository.HeartbeatInfo{
 		Identity:    req.Identity,
 		RouterOSVer: req.RouterOSVer,
@@ -211,7 +214,7 @@ func (h *RouterHandler) Heartbeat(c *fiber.Ctx) error {
 		CPULoad:     req.CPULoad,
 		FreeMemory:  req.FreeMemory,
 		TotalMemory: req.TotalMemory,
-	})
+	}, senderIP)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidHeartbeat) {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})

@@ -65,6 +65,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	rewardRepo := repository.NewRewardRepository(deps.DB)
 	subscriptionRepo := repository.NewSubscriptionRepository(deps.DB)
 	roleRepo := repository.NewRoleRepository(deps.DB)
+	billingProfileRepo := repository.NewBillingProfileRepository(deps.DB)
 	auditLogRepo := repository.NewAuditLogRepository(deps.DB)
 	waRepo := repository.NewWhatsAppRepository(deps.DB)
 	waTemplateRepo := repository.NewWABroadcastTemplateRepository(deps.DB)
@@ -106,7 +107,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	routerService := service.NewRouterService(routerRepo, sessionRepo, vpnMgr).WithSNMP(snmpService).
 		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret)
 	packageService := service.NewPackageService(packageRepo)
-	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL).WithSettingRepo(settingRepo)
+	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL).WithSettingRepo(settingRepo).WithBillingProfileRepo(billingProfileRepo)
 	ticketService := service.NewTicketService(ticketRepo)
 	mobileService := service.NewMobileService(customerRepo, invoiceRepo, ticketRepo, packageRepo, tokenManager)
 	voucherService := service.NewVoucherService(voucherProductRepo, voucherRepo, voucherPaymentRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL)
@@ -117,10 +118,11 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	customerLogService := service.NewCustomerLogService(customerLogRepo)
 	settingService := service.NewSettingService(settingRepo)
 	oltService := service.NewOLTService(oltRepo).WithVPNManager(vpnMgr)
+	go oltService.RestoreAllRoutes(context.Background())
 	odpService := service.NewODPService(odpRepo, customerRepo, ontRepo)
 	ontService := service.NewONTService(ontRepo).WithCustomerLog(customerLogRepo)
 	ftthService := service.NewFTTHService(ftthRepo)
-	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo)
+	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo).WithPaymentRepo(paymentRepo)
 	reportService := service.NewReportService(reportRepo)
 	exportService := service.NewExportService(reportRepo)
 	bandwidthService := service.NewBandwidthService(bandwidthRepo)
@@ -128,12 +130,15 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	ipamService := service.NewIPAMService(ipamRepo)
 	resellerService := service.NewResellerService(resellerRepo)
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
-	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&deps.Config.PG, deps.Config.App.URL).WithReminderRepo(reminderRepo).WithWAClient(waClient)
+	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&deps.Config.PG, deps.Config.App.URL).WithReminderRepo(reminderRepo).WithWAClient(waClient).WithSettingRepo(settingRepo)
 	adminService := service.NewAdminService(adminRepo).WithTenantService(tenantService)
+	billingProfileService := service.NewBillingProfileService(billingProfileRepo)
 
 	// GenieACS TR-069 client & service
 	genieacsClient := genieacs.NewClient(deps.Config.GenieACS)
-	genieacsService := service.NewGenieACSService(genieacsClient, ontRepo, customerRepo)
+	genieacsService := service.NewGenieACSService(genieacsClient, ontRepo, customerRepo).
+		WithWAClient(waClient).
+		WithSettingRepo(settingRepo)
 
 	// Link GenieACS to customer service for FTTH auto-provisioning
 	customerService.WithGenieACS(ontRepo, genieacsService)
@@ -150,21 +155,11 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	authHandler.WithReminderRepo(reminderRepo)
 	userHandler := handler.NewUserHandler(userService)
 	roleHandler := handler.NewRoleHandler(roleService)
-	customerHandler := handler.NewCustomerHandler(customerService)
+	customerHandler := handler.NewCustomerHandler(customerService).WithInvoiceService(invoiceService)
 	routerHandler := handler.NewRouterHandler(routerService)
 	packageHandler := handler.NewPackageHandler(packageService)
 	baseURL := deps.Config.App.URL
-	tenantHandler := handler.NewTenantHandler(tenantService).WithWebhookURLs(map[string]string{
-		"tripay":                baseURL + "/api/v1/webhooks/tripay",
-		"tripay_voucher":        baseURL + "/api/v1/webhooks/tripay/voucher",
-		"tripay_subscription":   baseURL + "/api/v1/webhooks/subscription/tripay",
-		"midtrans":              baseURL + "/api/v1/webhooks/midtrans",
-		"midtrans_voucher":      baseURL + "/api/v1/webhooks/midtrans/voucher",
-		"midtrans_subscription": baseURL + "/api/v1/webhooks/subscription/midtrans",
-		"xendit":                baseURL + "/api/v1/webhooks/xendit",
-		"xendit_voucher":        baseURL + "/api/v1/webhooks/xendit/voucher",
-		"xendit_subscription":   baseURL + "/api/v1/webhooks/subscription/xendit",
-	})
+	tenantHandler := handler.NewTenantHandler(tenantService).WithWebhookBaseURL(baseURL)
 	invoiceHandler := handler.NewInvoiceHandler(invoiceService)
 	ticketHandler := handler.NewTicketHandler(ticketService)
 	voucherHandler := handler.NewVoucherHandler(voucherService)
@@ -195,12 +190,13 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	mobileHandler := handler.NewMobileHandler(mobileService)
 	themeHandler := handler.NewThemeHandler(settingService)
 	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionService)
-	snmpHandler := handler.NewSNMPHandler(snmpService)
+	snmpHandler := handler.NewSNMPHandler(snmpService).WithOLTService(oltService)
 	waHandler := handler.NewWhatsAppHandler(waClient, waRepo).WithBaseURL(deps.Config.App.URL)
 	waTemplateHandler := handler.NewWATemplateHandler(waTemplateRepo)
 	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo)
 	adminHandler := handler.NewAdminHandler(adminService).WithSubscriptionService(subscriptionService).WithReminderRepo(reminderRepo)
-	saSettingsHandler := handler.NewSASettingsHandler(tenantService, settingService, waClient)
+	saSettingsHandler := handler.NewSASettingsHandler(tenantService, settingService, waClient).WithBaseURL(deps.Config.App.URL)
+	billingProfileHandler := handler.NewBillingProfileHandler(billingProfileService)
 	wsHandler := handler.NewWSHandler(dashboardService, bandwidthService, routerService, deps.Config.JWT.PublicKeyPath)
 	i18nHandler := handler.NewI18nHandler()
 	_ = userHandler
@@ -263,14 +259,14 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	cwmpHandler := handler.NewCWMPHandler(genieacsClient, tenantRepo, customerRepo, ontRepo, "http://127.0.0.1:17547")
 	app.All("/cwmp", cwmpHandler.Handle)
 
-	// Payment gateway webhooks
+	// Payment gateway webhooks (per-tenant invoice & voucher; global subscription)
 	webhooks := v1.Group("/webhooks")
-	webhooks.Post("/tripay", publicLimiter, webhookHandler.TripayCallback)
-	webhooks.Post("/midtrans", publicLimiter, webhookHandler.MidtransCallback)
-	webhooks.Post("/xendit", publicLimiter, webhookHandler.XenditCallback)
-	webhooks.Post("/tripay/voucher", publicLimiter, webhookHandler.TripayVoucherCallback)
-	webhooks.Post("/midtrans/voucher", publicLimiter, webhookHandler.MidtransVoucherCallback)
-	webhooks.Post("/xendit/voucher", publicLimiter, webhookHandler.XenditVoucherCallback)
+	webhooks.Post("/tripay/:slug", publicLimiter, webhookHandler.TripayCallback)
+	webhooks.Post("/midtrans/:slug", publicLimiter, webhookHandler.MidtransCallback)
+	webhooks.Post("/xendit/:slug", publicLimiter, webhookHandler.XenditCallback)
+	webhooks.Post("/tripay/:slug/voucher", publicLimiter, webhookHandler.TripayVoucherCallback)
+	webhooks.Post("/midtrans/:slug/voucher", publicLimiter, webhookHandler.MidtransVoucherCallback)
+	webhooks.Post("/xendit/:slug/voucher", publicLimiter, webhookHandler.XenditVoucherCallback)
 	webhooks.Post("/subscription/tripay", publicLimiter, webhookHandler.TripaySubscriptionCallback)
 	webhooks.Post("/subscription/midtrans", publicLimiter, webhookHandler.MidtransSubscriptionCallback)
 	webhooks.Post("/subscription/xendit", publicLimiter, webhookHandler.XenditSubscriptionCallback)
@@ -288,6 +284,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	portalHandler := handler.NewPortalHandler(customerRepo, invoiceRepo, ticketRepo, paymentRepo, tenantRepo, tokenManager)
 	portalHandler.WithResetDeps(deps.Redis, waClient)
 	portalHandler.WithReminderRepo(reminderRepo)
+	portalHandler.WithDeviceService(ontRepo, genieacsService)
 	publicPortal := v1.Group("/public/portal")
 	publicPortal.Get("/:slug", publicLimiter, portalHandler.GetTenantInfo)
 	publicPortal.Post("/:slug/login", publicLimiter, portalHandler.PortalLogin)
@@ -329,9 +326,21 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	portal.Get("/tickets/:id/messages", portalHandler.GetTicketMessages)
 	portal.Post("/tickets/:id/messages", portalHandler.ReplyTicket)
 	portal.Put("/change-password", portalHandler.ChangePassword)
+	portal.Get("/device", portalHandler.GetDevice)
+	portal.Put("/device/wifi", portalHandler.SetDeviceWiFi)
+	portal.Post("/device/reboot", portalHandler.RebootDevice)
 
 	// Protected routes (staff only)
 	protected := v1.Group("/", authMiddleware.Handle(), middleware.TenantGuard(), middleware.StaffGuard(), middleware.NewPermissionLoader(roleRepo), middleware.SubscriptionGuard(tenantRepo))
+
+	// Billing Profile routes
+	billingProfiles := protected.Group("/billing-profiles")
+	billingProfiles.Get("/", billingProfileHandler.List)
+	billingProfiles.Post("/", billingProfileHandler.Create)
+	billingProfiles.Get("/:id", billingProfileHandler.GetByID)
+	billingProfiles.Put("/:id", billingProfileHandler.Update)
+	billingProfiles.Delete("/:id", billingProfileHandler.Delete)
+	billingProfiles.Put("/:id/default", billingProfileHandler.SetDefault)
 
 	// Current tenant routes
 	protected.Get("/tenant", tenantHandler.GetCurrent)
@@ -462,6 +471,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	routers.Post("/:id/vpn-key", middleware.PermissionGuard("routers.edit"), routerHandler.RegisterVPNKey)
 	routers.Get("/:id/mikrotik-config", routerHandler.GetMikroTikConfig)
 	routers.Get("/:id/connection-logs", routerHandler.ListConnectionLogs)
+	routers.Get("/:id/ip-pool", ipamHandler.GetPoolByRouter)
 	routers.Get("/vpn/peers", routerHandler.ListVPNPeers)
 
 	// OLT routes
@@ -472,6 +482,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	olts.Put("/:id", middleware.PermissionGuard("olts.edit"), oltHandler.Update)
 	olts.Delete("/:id", middleware.PermissionGuard("olts.delete"), oltHandler.Delete)
 	olts.Get("/:id/snmp/monitor", snmpHandler.MonitorOLT)
+	olts.Post("/:id/sync", middleware.PermissionGuard("olts.edit"), snmpHandler.SyncOLT)
 	olts.Get("/:id/pon-ports", oltHandler.ListPONPorts)
 	olts.Post("/:id/pon-ports", middleware.PermissionGuard("olts.edit"), oltHandler.CreatePONPort)
 	olts.Put("/:id/pon-ports/:portId", middleware.PermissionGuard("olts.edit"), oltHandler.UpdatePONPort)
@@ -545,6 +556,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	invoices.Post("/:id/pay", middleware.PermissionGuard("invoices.pay"), invoiceHandler.RecordPayment)
 	invoices.Post("/:id/pay-gateway", middleware.PermissionGuard("invoices.pay"), invoiceHandler.CreateGatewayPayment)
 	invoices.Get("/:id/payments", invoiceHandler.GetPayments)
+	invoices.Post("/:id/notify", middleware.PermissionGuard("invoices.view"), invoiceHandler.Notify)
 
 	// Payment routes
 	protected.Get("/payments", invoiceHandler.ListPayments)
@@ -699,6 +711,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	admin.Get("/settings", saSettingsHandler.GetSettings)
 	admin.Put("/settings", saSettingsHandler.UpdateSettings)
 	admin.Post("/settings/test-pg", saSettingsHandler.TestPGConnection)
+	admin.Get("/webhook-urls", saSettingsHandler.GetWebhookURLs)
 
 	// SuperAdmin WhatsApp session routes (dedicated, uses "superadmin" as session ID)
 	admin.Post("/wa/start", saSettingsHandler.StartWASession)
@@ -715,5 +728,12 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// SuperAdmin Subscription Reminder templates
 	admin.Get("/subscription/reminders", adminHandler.ListSubscriptionReminders)
 	admin.Put("/subscription/reminders/:id", adminHandler.UpdateSubscriptionReminder)
+
+	// SuperAdmin Subscription Order CRUD
+	admin.Get("/subscription/orders", adminHandler.ListSubOrders)
+	admin.Get("/subscription/orders/:id", adminHandler.GetSubOrder)
+	admin.Post("/subscription/orders", adminHandler.CreateSubOrder)
+	admin.Put("/subscription/orders/:id", adminHandler.UpdateSubOrder)
+	admin.Delete("/subscription/orders/:id", adminHandler.DeleteSubOrder)
 
 }

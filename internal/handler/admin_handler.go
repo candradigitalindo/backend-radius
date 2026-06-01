@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -295,4 +297,124 @@ func (h *AdminHandler) UpdateSubscriptionReminder(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui template"})
 	}
 	return c.JSON(fiber.Map{"data": rem})
+}
+
+// ── Subscription Order CRUD (superadmin) ─────────────────────────────────────
+
+func (h *AdminHandler) ListSubOrders(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	perPage, _ := strconv.Atoi(c.Query("per_page", "20"))
+
+	filter := repository.AdminOrderFilter{
+		TenantID: c.Query("tenant_id"),
+		Status:   c.Query("status"),
+		Search:   c.Query("search"),
+		Page:     page,
+		PerPage:  perPage,
+	}
+
+	rows, total, err := h.subscriptionService.AdminListAllOrders(c.Context(), filter)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat data transaksi"})
+	}
+	if rows == nil {
+		rows = []repository.AdminOrderRow{}
+	}
+	return c.JSON(fiber.Map{"data": rows, "total": total, "page": page})
+}
+
+func (h *AdminHandler) GetSubOrder(c *fiber.Ctx) error {
+	order, err := h.subscriptionService.AdminGetOrder(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat data transaksi"})
+	}
+	return c.JSON(fiber.Map{"data": order})
+}
+
+type adminCreateOrderReq struct {
+	TenantID       string `json:"tenant_id"`
+	PlanID         string `json:"plan_id"`
+	DurationMonths int    `json:"duration_months"`
+}
+
+func (h *AdminHandler) CreateSubOrder(c *fiber.Ctx) error {
+	var req adminCreateOrderReq
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+	if req.TenantID == "" || req.PlanID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tenant_id dan plan_id wajib diisi"})
+	}
+	if req.DurationMonths <= 0 {
+		req.DurationMonths = 1
+	}
+	order, err := h.subscriptionService.AdminCreateOrder(c.Context(), req.TenantID, req.PlanID, req.DurationMonths)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": order})
+}
+
+type adminUpdateOrderReq struct {
+	Status        string  `json:"status"`
+	PaymentMethod string  `json:"payment_method"`
+	PaymentRef    string  `json:"payment_ref"`
+	Notes         string  `json:"notes"`
+	PaidAt        *string `json:"paid_at"`
+	StartsAt      *string `json:"starts_at"`
+	ExpiresAt     *string `json:"expires_at"`
+}
+
+func (h *AdminHandler) UpdateSubOrder(c *fiber.Ctx) error {
+	var req adminUpdateOrderReq
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+
+	parseTime := func(s *string) *time.Time {
+		if s == nil || *s == "" {
+			return nil
+		}
+		t, err := time.Parse(time.RFC3339, *s)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", *s)
+			if err != nil {
+				return nil
+			}
+		}
+		return &t
+	}
+
+	input := service.AdminUpdateOrderInput{
+		Status:        req.Status,
+		PaymentMethod: req.PaymentMethod,
+		PaymentRef:    req.PaymentRef,
+		Notes:         req.Notes,
+		PaidAt:        parseTime(req.PaidAt),
+		StartsAt:      parseTime(req.StartsAt),
+		ExpiresAt:     parseTime(req.ExpiresAt),
+	}
+
+	order, err := h.subscriptionService.AdminUpdateOrder(c.Context(), c.Params("id"), input)
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"data": order})
+}
+
+func (h *AdminHandler) DeleteSubOrder(c *fiber.Ctx) error {
+	err := h.subscriptionService.AdminDeleteOrder(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus transaksi"})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
