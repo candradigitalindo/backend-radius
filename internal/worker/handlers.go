@@ -447,7 +447,10 @@ func formatAmountDot(amount int64) string {
 // HandleONTProvisionRetry mencoba provisioning ulang semua ONT aktif yang belum terprovisi.
 // Dipanggil secara periodik oleh scheduler — otomatis mendeteksi perangkat baru yang online.
 func (h *Handlers) HandleONTProvisionRetry(ctx context.Context, t *asynq.Task) error {
-	if h.GenieACSService == nil || h.ONTRepo == nil {
+	if h.GenieACSService == nil || h.ONTRepo == nil || h.SettingRepo == nil {
+		return nil
+	}
+	if ok, _ := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url"); !ok {
 		return nil
 	}
 
@@ -480,7 +483,13 @@ func (h *Handlers) HandleONTProvisionRetry(ctx context.Context, t *asynq.Task) e
 // Tenant pertama yang aktif digunakan sebagai konteks awal; serial number dicek lintas semua tenant
 // sehingga tidak ada duplikat meskipun ada banyak tenant.
 func (h *Handlers) HandleONTDiscover(ctx context.Context, t *asynq.Task) error {
-	if h.GenieACSService == nil || h.ONTRepo == nil {
+	if h.GenieACSService == nil || h.ONTRepo == nil || h.SettingRepo == nil {
+		return nil
+	}
+
+	// Skip jika tidak ada tenant yang mengkonfigurasi GenieACS — hindari error berulang.
+	hasGenie, err := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url")
+	if err != nil || !hasGenie {
 		return nil
 	}
 
@@ -529,7 +538,10 @@ func (h *Handlers) HandleONTDiscover(ctx context.Context, t *asynq.Task) error {
 // menggunakan PPPoE username dari parameter TR-069 di GenieACS.
 // Dijalankan SEKALI secara global — ONT dicari lintas semua tenant, pelanggan juga dicari global.
 func (h *Handlers) HandleONTAutoMatch(ctx context.Context, t *asynq.Task) error {
-	if h.GenieACSService == nil || h.ONTRepo == nil {
+	if h.GenieACSService == nil || h.ONTRepo == nil || h.SettingRepo == nil {
+		return nil
+	}
+	if ok, _ := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url"); !ok {
 		return nil
 	}
 

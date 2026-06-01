@@ -16,6 +16,8 @@ type SettingRepository interface {
 	Delete(ctx context.Context, tenantID, key string) error
 	List(ctx context.Context, tenantID string) ([]model.Setting, error)
 	BulkUpsert(ctx context.Context, tenantID string, settings map[string]string) error
+	// ExistsWithValue returns true jika ada baris settings dengan key tersebut dan value tidak kosong.
+	ExistsWithValue(ctx context.Context, key string) (bool, error)
 }
 
 type settingRepository struct {
@@ -101,4 +103,13 @@ func (r *settingRepository) BulkUpsert(ctx context.Context, tenantID string, set
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *settingRepository) ExistsWithValue(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM settings WHERE key = $1 AND value != '' AND value IS NOT NULL)`,
+		key,
+	).Scan(&exists)
+	return exists, err
 }
