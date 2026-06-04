@@ -1,3 +1,5 @@
 logs/
 .env
 nginx/
+/migrate
+keys/

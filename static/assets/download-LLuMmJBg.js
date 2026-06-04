@@ -1,0 +1,1 @@
+function e(e,t){if(!e)return;let n=document.createElement(`a`);n.href=e,t!==void 0&&(n.download=t),document.body.appendChild(n),n.click(),document.body.removeChild(n)}function t(t,n){e(t,n)}export{t as n,e as t};
