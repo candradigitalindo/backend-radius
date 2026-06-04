@@ -53,28 +53,28 @@ type ConnectedHost struct {
 }
 
 type DeviceInfo struct {
-	DeviceID          string          `json:"device_id"`
-	SerialNumber      string          `json:"serial_number"`
-	Manufacturer      string          `json:"manufacturer"`
-	ProductClass      string          `json:"product_class"`
-	SoftwareVersion   string          `json:"software_version,omitempty"`
-	Uptime            *int64          `json:"uptime,omitempty"`
-	RxPower           *float64        `json:"rx_power,omitempty"`
-	TxPower           *float64        `json:"tx_power,omitempty"`
-	WiFiSSID          string          `json:"wifi_ssid,omitempty"`
-	WiFiPassword      string          `json:"wifi_password"`       // tampilkan meski kosong, "" = belum ada password
-	WiFiPasswordReported bool         `json:"wifi_password_reported"`
-	WiFiPasswordSource string         `json:"wifi_password_source,omitempty"`
-	WiFiSecurity      string          `json:"wifi_security,omitempty"`
-	WiFiSecurityModes []string        `json:"wifi_security_modes,omitempty"`
-	WANIP             string          `json:"wan_ip,omitempty"`
-	PPPoEUsername     string          `json:"pppoe_username,omitempty"`
-	LastInform        string          `json:"last_inform,omitempty"`
-	DataRealtime      bool            `json:"data_realtime"`
-	ConnectedHostCount int            `json:"connected_host_count"`
-	ConnectedHostsComplete bool       `json:"connected_hosts_complete"`
-	ConnectedHostsSource string       `json:"connected_hosts_source,omitempty"`
-	ConnectedHosts    []ConnectedHost `json:"connected_hosts"`
+	DeviceID               string          `json:"device_id"`
+	SerialNumber           string          `json:"serial_number"`
+	Manufacturer           string          `json:"manufacturer"`
+	ProductClass           string          `json:"product_class"`
+	SoftwareVersion        string          `json:"software_version,omitempty"`
+	Uptime                 *int64          `json:"uptime,omitempty"`
+	RxPower                *float64        `json:"rx_power,omitempty"`
+	TxPower                *float64        `json:"tx_power,omitempty"`
+	WiFiSSID               string          `json:"wifi_ssid,omitempty"`
+	WiFiPassword           string          `json:"wifi_password"` // tampilkan meski kosong, "" = belum ada password
+	WiFiPasswordReported   bool            `json:"wifi_password_reported"`
+	WiFiPasswordSource     string          `json:"wifi_password_source,omitempty"`
+	WiFiSecurity           string          `json:"wifi_security,omitempty"`
+	WiFiSecurityModes      []string        `json:"wifi_security_modes,omitempty"`
+	WANIP                  string          `json:"wan_ip,omitempty"`
+	PPPoEUsername          string          `json:"pppoe_username,omitempty"`
+	LastInform             string          `json:"last_inform,omitempty"`
+	DataRealtime           bool            `json:"data_realtime"`
+	ConnectedHostCount     int             `json:"connected_host_count"`
+	ConnectedHostsComplete bool            `json:"connected_hosts_complete"`
+	ConnectedHostsSource   string          `json:"connected_hosts_source,omitempty"`
+	ConnectedHosts         []ConnectedHost `json:"connected_hosts"`
 }
 
 // ONTDashboardItem represents one ONT in the dashboard view.
@@ -573,15 +573,15 @@ func (s *GenieACSService) GetDeviceStatus(ctx context.Context, tenantID, serial 
 	}
 
 	info := &DeviceInfo{
-		DeviceID:       device.ID,
-		SerialNumber:   serial,
-		Manufacturer:   device.Manufacturer,
-		ProductClass:   device.ProductClass,
-		LastInform:     device.LastInform,
-		DataRealtime:   dataRealtime,
+		DeviceID:               device.ID,
+		SerialNumber:           serial,
+		Manufacturer:           device.Manufacturer,
+		ProductClass:           device.ProductClass,
+		LastInform:             device.LastInform,
+		DataRealtime:           dataRealtime,
 		ConnectedHostsComplete: true,
-		ConnectedHostsSource: "none",
-		ConnectedHosts: []ConnectedHost{},
+		ConnectedHostsSource:   "none",
+		ConnectedHosts:         []ConnectedHost{},
 	}
 
 	if sw := device.GetNestedValue("InternetGatewayDevice.DeviceInfo.SoftwareVersion"); sw != nil {
@@ -883,7 +883,6 @@ func buildAssociatedHostRefreshPaths() []string {
 	}
 	return paths
 }
-
 
 func genieStrVal(v interface{}) string {
 	if v == nil {

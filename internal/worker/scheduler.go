@@ -12,18 +12,18 @@ import (
 )
 
 type SchedulerConfig struct {
-	InvoiceCron        string
-	IsolirCron         string
-	GracePeriodCron    string
-	ReminderCron       string
-	ExpirePayCron      string
-	RouterMonitorCron  string
-	CleanSessionsCron  string
-	ONTProvisionCron   string
-	ONTDiscoverCron    string
-	ONTAutoMatchCron   string
-	ExpireRewardsCron  string
-	SubExpiryCron      string
+	InvoiceCron       string
+	IsolirCron        string
+	GracePeriodCron   string
+	ReminderCron      string
+	ExpirePayCron     string
+	RouterMonitorCron string
+	CleanSessionsCron string
+	ONTProvisionCron  string
+	ONTDiscoverCron   string
+	ONTAutoMatchCron  string
+	ExpireRewardsCron string
+	SubExpiryCron     string
 }
 
 func invoiceTargetPeriod(now time.Time) (month, year int) {

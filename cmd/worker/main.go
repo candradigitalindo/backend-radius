@@ -53,9 +53,13 @@ func main() {
 	subscriptionRepo := repository.NewSubscriptionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
 	billingProfileRepo := repository.NewBillingProfileRepository(db)
+	notificationRepo := repository.NewNotificationRepository(db)
 
 	// WhatsApp client
 	waClient := whatsapp.NewClient(cfg.WhatsApp)
+
+	// Notification service (web-push + in-app) for billing events
+	notificationService := service.NewNotificationService(notificationRepo, customerRepo, cfg.FCM.ProjectID, cfg.FCM.CredentialsFile, cfg.FCM.Enabled).WithWAClient(waClient)
 
 	// Services — semua With* method mutate in-place, chain dengan benar
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
@@ -65,7 +69,8 @@ func main() {
 		WithReminderRepo(reminderRepo).
 		WithSettingRepo(settingRepo).
 		WithReward(rewardService).
-		WithBillingProfileRepo(billingProfileRepo)
+		WithBillingProfileRepo(billingProfileRepo).
+		WithNotificationService(notificationService)
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
 	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, nil)
@@ -77,24 +82,25 @@ func main() {
 
 	// Task handlers
 	handlers := &worker.Handlers{
-		DB:               db,
-		InvoiceService:   invoiceService,
-		CustomerService:  customerService,
-		ReminderService:  reminderService,
-		TenantRepo:       tenantRepo,
-		InvoiceRepo:      invoiceRepo,
-		ReminderRepo:     reminderRepo,
-		RouterRepo:       routerRepo,
-		SessionRepo:      sessionRepo,
-		IPAMRepo:         ipamRepo,
-		SettingRepo:      settingRepo,
-		RouterService:    routerService,
-		SNMPService:      snmpService,
-		RewardService:    rewardService,
-		WAClient:         waClient,
-		GenieACSService:  genieacsService,
-		ONTRepo:          ontRepo,
-		SubscriptionRepo: subscriptionRepo,
+		DB:                  db,
+		InvoiceService:      invoiceService,
+		CustomerService:     customerService,
+		ReminderService:     reminderService,
+		TenantRepo:          tenantRepo,
+		InvoiceRepo:         invoiceRepo,
+		ReminderRepo:        reminderRepo,
+		RouterRepo:          routerRepo,
+		SessionRepo:         sessionRepo,
+		IPAMRepo:            ipamRepo,
+		SettingRepo:         settingRepo,
+		RouterService:       routerService,
+		SNMPService:         snmpService,
+		RewardService:       rewardService,
+		WAClient:            waClient,
+		GenieACSService:     genieacsService,
+		ONTRepo:             ontRepo,
+		SubscriptionRepo:    subscriptionRepo,
+		NotificationService: notificationService,
 	}
 
 	// Asynq server

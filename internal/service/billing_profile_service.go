@@ -11,11 +11,11 @@ import (
 )
 
 var (
-	ErrBillingProfileNotFound    = errors.New("profil billing tidak ditemukan")
-	ErrBillingProfileInUse       = errors.New("profil billing masih digunakan oleh pelanggan")
-	ErrBillingProfileNameEmpty   = errors.New("nama profil billing wajib diisi")
-	ErrBillingModelInvalid       = errors.New("model billing tidak valid (cycle atau fixed)")
-	ErrPaymentTimingInvalid      = errors.New("payment timing tidak valid (due_date atau advance)")
+	ErrBillingProfileNotFound  = errors.New("profil billing tidak ditemukan")
+	ErrBillingProfileInUse     = errors.New("profil billing masih digunakan oleh pelanggan")
+	ErrBillingProfileNameEmpty = errors.New("nama profil billing wajib diisi")
+	ErrBillingModelInvalid     = errors.New("model billing tidak valid (cycle atau fixed)")
+	ErrPaymentTimingInvalid    = errors.New("payment timing tidak valid (due_date atau advance)")
 )
 
 type BillingProfileService struct {

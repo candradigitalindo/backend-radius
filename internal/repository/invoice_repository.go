@@ -543,9 +543,9 @@ func (r *invoiceRepository) NextDailySeq(ctx context.Context, tenantID, datePref
 }
 
 // ListIsolatedGraceExpired returns customer IDs that:
-//  - status = 'isolated'
-//  - isolated_at + grace_period <= today (grace period has elapsed)
-//  - still have unpaid invoice
+//   - status = 'isolated'
+//   - isolated_at + grace_period <= today (grace period has elapsed)
+//   - still have unpaid invoice
 //
 // Uses billing_profiles.grace_period per customer; falls back to $2 (tenant default).
 func (r *invoiceRepository) ListIsolatedGraceExpired(ctx context.Context, tenantID string, defaultGracePeriod int) ([]string, error) {

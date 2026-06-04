@@ -100,8 +100,9 @@ type GenieACSConfig struct {
 }
 
 type FCMConfig struct {
-	ServerKey string
-	Enabled   bool
+	ProjectID       string // Firebase project ID
+	CredentialsFile string // path to service-account JSON
+	Enabled         bool
 }
 
 type PGConfig struct {
@@ -180,8 +181,9 @@ func Load() (*Config, error) {
 			APISecret:  getEnv("WA_API_SECRET", ""),
 		},
 		FCM: FCMConfig{
-			ServerKey: getEnv("FCM_SERVER_KEY", ""),
-			Enabled:   getEnvBool("FCM_ENABLED", false),
+			ProjectID:       getEnv("FCM_PROJECT_ID", ""),
+			CredentialsFile: getEnv("FCM_CREDENTIALS_FILE", "./keys/fcm-service-account.json"),
+			Enabled:         getEnvBool("FCM_ENABLED", false),
 		},
 		PG: PGConfig{
 			Provider:   getEnv("PG_PROVIDER", "tripay"),

@@ -143,9 +143,9 @@ func TestApplyUpdatedCustomerBillingScheduleUsesExplicitInvoiceAndDueDates(t *te
 	}
 
 	applyUpdatedCustomerBillingSchedule(customer, UpdateCustomerServiceInput{
-		JoinDate:        &joinDate,
-		InvoiceDate:     &invoiceDate,
-		BillingDueDate:  &dueDate,
+		JoinDate:       &joinDate,
+		InvoiceDate:    &invoiceDate,
+		BillingDueDate: &dueDate,
 	})
 
 	if customer.BillingDate != 24 {

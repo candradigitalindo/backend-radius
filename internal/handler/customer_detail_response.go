@@ -8,29 +8,29 @@ import (
 )
 
 type customerDetailResponse struct {
-	ID           string                   `json:"id"`
-	TenantID     string                   `json:"tenant_id"`
-	CustomerCode string                   `json:"customer_code"`
-	Name         string                   `json:"name"`
-	NIK          string                   `json:"nik"`
-	Phone        string                   `json:"phone"`
-	Email        string                   `json:"email"`
-	Address      string                   `json:"address"`
-	Latitude     *float64                 `json:"latitude,omitempty"`
-	Longitude    *float64                 `json:"longitude,omitempty"`
-	PackageID    *string                  `json:"package_id,omitempty"`
-	RouterID     *string                  `json:"router_id,omitempty"`
-	ODPPortID    *string                  `json:"odp_port_id,omitempty"`
-	Status       string                   `json:"status"`
-	Notes        string                   `json:"notes"`
-	Access       customerAccessResponse   `json:"access"`
-	Billing      customerBillingResponse  `json:"billing"`
+	ID           string                     `json:"id"`
+	TenantID     string                     `json:"tenant_id"`
+	CustomerCode string                     `json:"customer_code"`
+	Name         string                     `json:"name"`
+	NIK          string                     `json:"nik"`
+	Phone        string                     `json:"phone"`
+	Email        string                     `json:"email"`
+	Address      string                     `json:"address"`
+	Latitude     *float64                   `json:"latitude,omitempty"`
+	Longitude    *float64                   `json:"longitude,omitempty"`
+	PackageID    *string                    `json:"package_id,omitempty"`
+	RouterID     *string                    `json:"router_id,omitempty"`
+	ODPPortID    *string                    `json:"odp_port_id,omitempty"`
+	Status       string                     `json:"status"`
+	Notes        string                     `json:"notes"`
+	Access       customerAccessResponse     `json:"access"`
+	Billing      customerBillingResponse    `json:"billing"`
 	Connection   customerConnectionResponse `json:"connection"`
-	Package      *customerPackageResponse `json:"package,omitempty"`
-	Router       *customerRouterResponse  `json:"router,omitempty"`
-	ONT          *customerONTResponse     `json:"ont,omitempty"`
-	CreatedAt    time.Time                `json:"created_at"`
-	UpdatedAt    time.Time                `json:"updated_at"`
+	Package      *customerPackageResponse   `json:"package,omitempty"`
+	Router       *customerRouterResponse    `json:"router,omitempty"`
+	ONT          *customerONTResponse       `json:"ont,omitempty"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	UpdatedAt    time.Time                  `json:"updated_at"`
 }
 
 type customerAccessResponse struct {
@@ -54,16 +54,16 @@ type customerBillingResponse struct {
 }
 
 type customerConnectionResponse struct {
-	Type         string                         `json:"type"`
-	Status       string                         `json:"status"`
-	ConfiguredIP string                         `json:"configured_ip,omitempty"`
-	CurrentIP    string                         `json:"current_ip,omitempty"`
-	Download     int64                          `json:"download"`
-	Upload       int64                          `json:"upload"`
-	RealtimeDownloadMbps float64                `json:"realtime_download_mbps"`
-	RealtimeUploadMbps   float64                `json:"realtime_upload_mbps"`
-	RealtimeSampledAt    *time.Time             `json:"realtime_sampled_at,omitempty"`
-	ActiveSession *customerActiveSessionResponse `json:"active_session,omitempty"`
+	Type                 string                         `json:"type"`
+	Status               string                         `json:"status"`
+	ConfiguredIP         string                         `json:"configured_ip,omitempty"`
+	CurrentIP            string                         `json:"current_ip,omitempty"`
+	Download             int64                          `json:"download"`
+	Upload               int64                          `json:"upload"`
+	RealtimeDownloadMbps float64                        `json:"realtime_download_mbps"`
+	RealtimeUploadMbps   float64                        `json:"realtime_upload_mbps"`
+	RealtimeSampledAt    *time.Time                     `json:"realtime_sampled_at,omitempty"`
+	ActiveSession        *customerActiveSessionResponse `json:"active_session,omitempty"`
 }
 
 type customerPackageResponse struct {
@@ -116,19 +116,19 @@ type customerActiveSessionResponse struct {
 }
 
 type customerONTResponse struct {
-	ID           string                            `json:"id"`
-	SerialNumber string                            `json:"serial_number,omitempty"`
-	Model        *string                           `json:"model,omitempty"`
-	Vendor       *string                           `json:"vendor,omitempty"`
-	Status       string                            `json:"status,omitempty"`
-	ProvisionedAt *time.Time                       `json:"provisioned_at,omitempty"`
-	LastOnlineAt *time.Time                        `json:"last_online_at,omitempty"`
-	Device       *customerONTDeviceResponse        `json:"device,omitempty"`
-	Signal       *customerONTSignalResponse        `json:"signal,omitempty"`
-	WiFi         *customerONTWiFiResponse          `json:"wifi,omitempty"`
-	Network      *customerONTNetworkResponse       `json:"network,omitempty"`
+	ID             string                             `json:"id"`
+	SerialNumber   string                             `json:"serial_number,omitempty"`
+	Model          *string                            `json:"model,omitempty"`
+	Vendor         *string                            `json:"vendor,omitempty"`
+	Status         string                             `json:"status,omitempty"`
+	ProvisionedAt  *time.Time                         `json:"provisioned_at,omitempty"`
+	LastOnlineAt   *time.Time                         `json:"last_online_at,omitempty"`
+	Device         *customerONTDeviceResponse         `json:"device,omitempty"`
+	Signal         *customerONTSignalResponse         `json:"signal,omitempty"`
+	WiFi           *customerONTWiFiResponse           `json:"wifi,omitempty"`
+	Network        *customerONTNetworkResponse        `json:"network,omitempty"`
 	ConnectedHosts *customerONTConnectedHostsResponse `json:"connected_hosts,omitempty"`
-	Actions      *model.ONTAvailableActions        `json:"actions,omitempty"`
+	Actions        *model.ONTAvailableActions         `json:"actions,omitempty"`
 }
 
 type customerONTDeviceResponse struct {
@@ -192,16 +192,16 @@ func newCustomerDetailResponse(customer *model.Customer) *customerDetailResponse
 		},
 		Billing: mapCustomerBilling(customer, time.Now()),
 		Connection: customerConnectionResponse{
-			Type:          customer.ConnectionType,
-			Status:        deriveCustomerConnectionStatus(customer),
-			ConfiguredIP:  customer.IPAddress,
-			CurrentIP:     deriveCustomerCurrentIP(customer),
-			Download:      deriveCustomerDownload(customer),
-			Upload:        deriveCustomerUpload(customer),
+			Type:                 customer.ConnectionType,
+			Status:               deriveCustomerConnectionStatus(customer),
+			ConfiguredIP:         customer.IPAddress,
+			CurrentIP:            deriveCustomerCurrentIP(customer),
+			Download:             deriveCustomerDownload(customer),
+			Upload:               deriveCustomerUpload(customer),
 			RealtimeDownloadMbps: deriveCustomerRealtimeDownloadMbps(customer),
 			RealtimeUploadMbps:   deriveCustomerRealtimeUploadMbps(customer),
 			RealtimeSampledAt:    deriveCustomerRealtimeSampledAt(customer),
-			ActiveSession: mapCustomerActiveSession(customer.ActiveSession),
+			ActiveSession:        mapCustomerActiveSession(customer.ActiveSession),
 		},
 		Package:   mapCustomerPackage(customer.Package),
 		Router:    mapCustomerRouter(customer.Router),
@@ -460,15 +460,15 @@ func mapCustomerONT(ont *model.ONT) *customerONTResponse {
 	}
 
 	resp := &customerONTResponse{
-		ID:           ont.ID,
-		SerialNumber: ont.SerialNumber,
-		Model:        ont.Model,
-		Vendor:       ont.Vendor,
-		Status:       ont.Status,
+		ID:            ont.ID,
+		SerialNumber:  ont.SerialNumber,
+		Model:         ont.Model,
+		Vendor:        ont.Vendor,
+		Status:        ont.Status,
 		ProvisionedAt: ont.ProvisionedAt,
-		LastOnlineAt: ont.LastOnlineAt,
-		WiFi:         mapCustomerONTWiFi(ont),
-		Actions:      ont.Actions,
+		LastOnlineAt:  ont.LastOnlineAt,
+		WiFi:          mapCustomerONTWiFi(ont),
+		Actions:       ont.Actions,
 	}
 
 	if ont.StatusDetail == nil {

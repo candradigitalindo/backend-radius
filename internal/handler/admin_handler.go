@@ -228,10 +228,10 @@ func (h *AdminHandler) ResetTenantPassword(c *fiber.Ctx) error {
 	// Looking at router.go, AdminHandler is initialized with adminService.
 	// I will use a local reference if possible or I'll add it to the struct.
 	// Better: Add TenantService to AdminHandler.
-	
-	// I will update the struct first in a separate turn if needed, 
+
+	// I will update the struct first in a separate turn if needed,
 	// but let's assume I can add the method here and fix the struct later in the same file.
-	
+
 	pass, err := h.adminService.ResetTenantPassword(c.Context(), tenantID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

@@ -144,7 +144,6 @@ func (c *MidtransClient) CreateTransaction(ctx context.Context, req MidtransCrea
 		}
 	}
 
-
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

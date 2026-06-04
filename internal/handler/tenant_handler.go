@@ -30,38 +30,38 @@ func (h *TenantHandler) WithWebhookBaseURL(baseURL string) *TenantHandler {
 }
 
 type createTenantRequest struct {
-	Name                string `json:"name"`
-	Slug                string `json:"slug"`
-	Email               string `json:"email"`
-	Phone               string `json:"phone"`
-	Address             string `json:"address"`
-	Timezone            string `json:"timezone"`
-	Currency            string `json:"currency"`
-	BillingCycle        int    `json:"billing_cycle"`
-	DueDay              int    `json:"due_day"`
-	IsolirDay           int    `json:"isolir_day"`
-	GracePeriod         int    `json:"grace_period"`
-	DefaultBillingType  string `json:"default_billing_type"`
-	Plan                string `json:"plan"`
-	MaxCustomers        int    `json:"max_customers"`
-	Fingerprint         string `json:"fingerprint"`
+	Name               string `json:"name"`
+	Slug               string `json:"slug"`
+	Email              string `json:"email"`
+	Phone              string `json:"phone"`
+	Address            string `json:"address"`
+	Timezone           string `json:"timezone"`
+	Currency           string `json:"currency"`
+	BillingCycle       int    `json:"billing_cycle"`
+	DueDay             int    `json:"due_day"`
+	IsolirDay          int    `json:"isolir_day"`
+	GracePeriod        int    `json:"grace_period"`
+	DefaultBillingType string `json:"default_billing_type"`
+	Plan               string `json:"plan"`
+	MaxCustomers       int    `json:"max_customers"`
+	Fingerprint        string `json:"fingerprint"`
 }
 
 type updateTenantRequest struct {
-	Name                  string `json:"name"`
-	Email                 string `json:"email"`
-	Phone                 string `json:"phone"`
-	Address               string `json:"address"`
-	LogoURL               string `json:"logo_url"`
-	Timezone              string `json:"timezone"`
-	Currency              string `json:"currency"`
-	BillingCycle          int    `json:"billing_cycle"`
-	DueDay                int    `json:"due_day"`
-	IsolirDay             int    `json:"isolir_day"`
-	GracePeriod           int    `json:"grace_period"`
-	DefaultBillingType    string `json:"default_billing_type"`
-	DefaultPaymentTiming  string `json:"default_payment_timing"`
-	IsActive              bool   `json:"is_active"`
+	Name                 string `json:"name"`
+	Email                string `json:"email"`
+	Phone                string `json:"phone"`
+	Address              string `json:"address"`
+	LogoURL              string `json:"logo_url"`
+	Timezone             string `json:"timezone"`
+	Currency             string `json:"currency"`
+	BillingCycle         int    `json:"billing_cycle"`
+	DueDay               int    `json:"due_day"`
+	IsolirDay            int    `json:"isolir_day"`
+	GracePeriod          int    `json:"grace_period"`
+	DefaultBillingType   string `json:"default_billing_type"`
+	DefaultPaymentTiming string `json:"default_payment_timing"`
+	IsActive             bool   `json:"is_active"`
 }
 
 type updateSettingsRequest struct {
@@ -101,22 +101,22 @@ func (h *TenantHandler) Create(c *fiber.Ctx) error {
 	}
 
 	tenant, err := h.tenantService.Create(c.Context(), service.CreateTenantInput{
-		Name:                req.Name,
-		Slug:                req.Slug,
-		Email:               req.Email,
-		Phone:               req.Phone,
-		Address:             req.Address,
-		Timezone:            req.Timezone,
-		Currency:            req.Currency,
-		BillingCycle:        req.BillingCycle,
-		DueDay:              req.DueDay,
-		IsolirDay:           req.IsolirDay,
-		GracePeriod:         req.GracePeriod,
-		DefaultBillingType:  req.DefaultBillingType,
-		Plan:                req.Plan,
-		MaxCustomers:        req.MaxCustomers,
-		Fingerprint:         req.Fingerprint,
-		RegistrationIP:      c.IP(),
+		Name:               req.Name,
+		Slug:               req.Slug,
+		Email:              req.Email,
+		Phone:              req.Phone,
+		Address:            req.Address,
+		Timezone:           req.Timezone,
+		Currency:           req.Currency,
+		BillingCycle:       req.BillingCycle,
+		DueDay:             req.DueDay,
+		IsolirDay:          req.IsolirDay,
+		GracePeriod:        req.GracePeriod,
+		DefaultBillingType: req.DefaultBillingType,
+		Plan:               req.Plan,
+		MaxCustomers:       req.MaxCustomers,
+		Fingerprint:        req.Fingerprint,
+		RegistrationIP:     c.IP(),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrSlugAlreadyUsed) {
@@ -170,17 +170,17 @@ func (h *TenantHandler) Update(c *fiber.Ctx) error {
 	}
 
 	tenant, err := h.tenantService.Update(c.Context(), tenantID, service.UpdateTenantInput{
-		Name:                req.Name,
-		Email:               req.Email,
-		Phone:               req.Phone,
-		Address:             req.Address,
-		LogoURL:             req.LogoURL,
-		Timezone:            req.Timezone,
-		Currency:            req.Currency,
-		BillingCycle:        req.BillingCycle,
-		DueDay:              req.DueDay,
-		IsolirDay:           req.IsolirDay,
-		GracePeriod:         req.GracePeriod,
+		Name:                 req.Name,
+		Email:                req.Email,
+		Phone:                req.Phone,
+		Address:              req.Address,
+		LogoURL:              req.LogoURL,
+		Timezone:             req.Timezone,
+		Currency:             req.Currency,
+		BillingCycle:         req.BillingCycle,
+		DueDay:               req.DueDay,
+		IsolirDay:            req.IsolirDay,
+		GracePeriod:          req.GracePeriod,
 		DefaultBillingType:   req.DefaultBillingType,
 		DefaultPaymentTiming: req.DefaultPaymentTiming,
 		IsActive:             req.IsActive,
@@ -346,6 +346,17 @@ func (h *TenantHandler) AdminUpdate(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"data": tenant})
+}
+
+func (h *TenantHandler) Delete(c *fiber.Ctx) error {
+	tenantID := c.Params("id")
+	if err := h.tenantService.Delete(c.Context(), tenantID); err != nil {
+		if errors.Is(err, service.ErrTenantNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus tenant"})
+	}
+	return c.JSON(fiber.Map{"message": "Tenant berhasil dihapus"})
 }
 
 // POST /api/v1/tenants/:id/approve

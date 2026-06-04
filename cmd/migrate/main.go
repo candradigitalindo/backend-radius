@@ -108,7 +108,10 @@ func loadMigrations() ([]migration, error) {
 		name := strings.TrimSuffix(parts[1], ".sql")
 
 		raw := string(content)
-		up, down := parseMigration(raw)
+		up, down, err := parseMigration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("migration %s tidak valid: %w", e.Name(), err)
+		}
 
 		migrations = append(migrations, migration{
 			Version:  version,
@@ -126,14 +129,43 @@ func loadMigrations() ([]migration, error) {
 	return migrations, nil
 }
 
-func parseMigration(raw string) (up, down string) {
-	parts := strings.SplitN(raw, "-- migrate:down", 2)
-	up = strings.TrimPrefix(parts[0], "-- migrate:up")
-	up = strings.TrimSpace(up)
+// parseMigration extracts the up/down SQL from a migration file.
+//
+// Supported formats:
+//   - Marker-based: "-- migrate:up" ... "-- migrate:down" ... (down optional).
+//   - Legacy plain SQL with no markers: treated as an up-only (irreversible)
+//     migration — preserves older files that predate the marker convention.
+//
+// Foreign formats like goose's "-- +goose Up/Down" are rejected: their down
+// sections aren't recognized here, so every statement — including DROPs meant
+// for rollback — would run as a single "up" block. That previously caused an
+// ADD+DROP file to apply then immediately revert while still being recorded as
+// applied (a silent failure).
+func parseMigration(raw string) (up, down string, err error) {
+	if strings.Contains(raw, "+goose") {
+		return "", "", fmt.Errorf("format goose ('+goose') tidak didukung; gunakan '-- migrate:up' / '-- migrate:down'")
+	}
+
+	upIdx := strings.Index(raw, "-- migrate:up")
+	if upIdx < 0 {
+		// Legacy plain SQL: whole file is the up migration, no rollback.
+		up = strings.TrimSpace(raw)
+		if up == "" {
+			return "", "", fmt.Errorf("file migration kosong")
+		}
+		return up, "", nil
+	}
+
+	afterUp := raw[upIdx+len("-- migrate:up"):]
+	parts := strings.SplitN(afterUp, "-- migrate:down", 2)
+	up = strings.TrimSpace(parts[0])
 	if len(parts) == 2 {
 		down = strings.TrimSpace(parts[1])
 	}
-	return
+	if up == "" {
+		return "", "", fmt.Errorf("bagian '-- migrate:up' kosong")
+	}
+	return up, down, nil
 }
 
 func migrateUp(ctx context.Context, db *pgxpool.Pool, migrations []migration) error {

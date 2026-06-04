@@ -432,20 +432,20 @@ func stringVal(s *string) string {
 }
 
 type MikroTikConfig struct {
-	RouterName     string `json:"router_name"`
-	VPNIP          string `json:"vpn_ip"`
-	RADIUSSecret   string `json:"radius_secret"`
-	HeartbeatToken string `json:"heartbeat_token"`
-	HeartbeatURL   string `json:"heartbeat_url"`
-	CoAPort        int    `json:"coa_port"`
+	RouterName      string `json:"router_name"`
+	VPNIP           string `json:"vpn_ip"`
+	RADIUSSecret    string `json:"radius_secret"`
+	HeartbeatToken  string `json:"heartbeat_token"`
+	HeartbeatURL    string `json:"heartbeat_url"`
+	CoAPort         int    `json:"coa_port"`
 	ServerPublicKey string `json:"server_public_key"`
 	ServerEndpoint  string `json:"server_endpoint"`
 	ServerVPNIP     string `json:"server_vpn_ip"`
 	VPNSubnet       string `json:"vpn_subnet"`
 	VPNListenPort   string `json:"vpn_listen_port"`
-	RADIUSAuthPort string `json:"radius_auth_port"`
-	RADIUSAcctPort string `json:"radius_acct_port"`
-	Script string `json:"script"`
+	RADIUSAuthPort  string `json:"radius_auth_port"`
+	RADIUSAcctPort  string `json:"radius_acct_port"`
+	Script          string `json:"script"`
 }
 
 func (s *RouterService) GetMikroTikConfig(ctx context.Context, tenantID, routerID string) (*MikroTikConfig, error) {

@@ -485,10 +485,12 @@ func (s *Server) handleAccounting(w radius.ResponseWriter, r *radius.Request) {
 
 func (s *Server) handleAcctStart(ctx context.Context, username, sessionID, nasIP, framedIP, callerID string) {
 	// Find customer and router for tenant context
-        router, _ := s.routerRepo.FindByVPNIP(ctx, nasIP)
-        tenantID := ""
-        if router != nil { tenantID = router.TenantID }
-        customer, _ := s.customerRepo.FindByPPPoEUsername(ctx, tenantID, username)
+	router, _ := s.routerRepo.FindByVPNIP(ctx, nasIP)
+	tenantID := ""
+	if router != nil {
+		tenantID = router.TenantID
+	}
+	customer, _ := s.customerRepo.FindByPPPoEUsername(ctx, tenantID, username)
 
 	// Only accept sessions from users registered in this system (customer or voucher)
 	var voucherUser bool

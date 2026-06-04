@@ -32,13 +32,13 @@ func NewClient(cfg config.GenieACSConfig) *Client {
 }
 
 type Device struct {
-	ID           string           `json:"_id"`
-	SerialNumber string           `json:"serial_number,omitempty"`
-	ProductClass string           `json:"product_class,omitempty"`
-	Manufacturer string           `json:"manufacturer,omitempty"`
-	Tags         []string         `json:"_tags,omitempty"`
-	LastInform   string           `json:"_lastInform,omitempty"`
-	Parameters   map[string]Param `json:"parameters,omitempty"`
+	ID           string                     `json:"_id"`
+	SerialNumber string                     `json:"serial_number,omitempty"`
+	ProductClass string                     `json:"product_class,omitempty"`
+	Manufacturer string                     `json:"manufacturer,omitempty"`
+	Tags         []string                   `json:"_tags,omitempty"`
+	LastInform   string                     `json:"_lastInform,omitempty"`
+	Parameters   map[string]Param           `json:"parameters,omitempty"`
 	Raw          map[string]json.RawMessage `json:"-"`
 }
 
@@ -188,7 +188,7 @@ type Task struct {
 	ParameterNames  []string    `json:"parameterNames,omitempty"`
 	// Completed is true when GenieACS executed the task on the ONT (HTTP 200).
 	// False means the task is queued (HTTP 202) — ONT didn't respond in time.
-	Completed       bool        `json:"-"`
+	Completed bool `json:"-"`
 }
 
 type TaskParam struct {

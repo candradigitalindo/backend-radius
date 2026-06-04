@@ -27,26 +27,26 @@ func (h *CustomerHandler) WithInvoiceService(svc *service.InvoiceService) *Custo
 }
 
 type createCustomerRequest struct {
-	Name            string   `json:"name"`
-	NIK             string   `json:"nik"`
-	Phone           string   `json:"phone"`
-	Email           string   `json:"email"`
-	Address         string   `json:"address"`
-	Latitude        *float64 `json:"latitude"`
-	Longitude       *float64 `json:"longitude"`
-	ConnectionType  string   `json:"connection_type"`
-	IPAddress       string   `json:"ip_address"`
-	PackageID       *string  `json:"package_id"`
-	RouterID        *string  `json:"router_id"`
-	ODPPortID       *string  `json:"odp_port_id"`
-	JoinDate         string  `json:"join_date"`
-	BillingType      string  `json:"billing_type"`
-	BillingProfileID *string `json:"billing_profile_id"`
-	CustomPrice      *int64  `json:"custom_price"`
-	Discount        int64    `json:"discount"`
-	AdditionalFee   int64    `json:"additional_fee"`
-	FeeDescription  string   `json:"fee_description"`
-	Notes           string   `json:"notes"`
+	Name             string   `json:"name"`
+	NIK              string   `json:"nik"`
+	Phone            string   `json:"phone"`
+	Email            string   `json:"email"`
+	Address          string   `json:"address"`
+	Latitude         *float64 `json:"latitude"`
+	Longitude        *float64 `json:"longitude"`
+	ConnectionType   string   `json:"connection_type"`
+	IPAddress        string   `json:"ip_address"`
+	PackageID        *string  `json:"package_id"`
+	RouterID         *string  `json:"router_id"`
+	ODPPortID        *string  `json:"odp_port_id"`
+	JoinDate         string   `json:"join_date"`
+	BillingType      string   `json:"billing_type"`
+	BillingProfileID *string  `json:"billing_profile_id"`
+	CustomPrice      *int64   `json:"custom_price"`
+	Discount         int64    `json:"discount"`
+	AdditionalFee    int64    `json:"additional_fee"`
+	FeeDescription   string   `json:"fee_description"`
+	Notes            string   `json:"notes"`
 	// FTTH / GenieACS: serial number perangkat ONT
 	SerialNumber string  `json:"serial_number"`
 	ONTVendor    *string `json:"ont_vendor"`
@@ -56,14 +56,14 @@ type createCustomerRequest struct {
 }
 
 type updateCustomerProfileRequest struct {
-	Name            string   `json:"name"`
-	NIK             string   `json:"nik"`
-	Phone           string   `json:"phone"`
-	Email           string   `json:"email"`
-	Address         string   `json:"address"`
-	Latitude        *float64 `json:"latitude"`
-	Longitude       *float64 `json:"longitude"`
-	Notes           string   `json:"notes"`
+	Name      string   `json:"name"`
+	NIK       string   `json:"nik"`
+	Phone     string   `json:"phone"`
+	Email     string   `json:"email"`
+	Address   string   `json:"address"`
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+	Notes     string   `json:"notes"`
 }
 
 type updateCustomerAccessRequest struct {
@@ -169,14 +169,14 @@ func (h *CustomerHandler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	customer, err := h.customerService.UpdateProfile(c.Context(), tenantID, customerID, service.UpdateCustomerProfileInput{
-		Name:            req.Name,
-		NIK:             req.NIK,
-		Phone:           req.Phone,
-		Email:           req.Email,
-		Address:         req.Address,
-		Latitude:        req.Latitude,
-		Longitude:       req.Longitude,
-		Notes:           req.Notes,
+		Name:      req.Name,
+		NIK:       req.NIK,
+		Phone:     req.Phone,
+		Email:     req.Email,
+		Address:   req.Address,
+		Latitude:  req.Latitude,
+		Longitude: req.Longitude,
+		Notes:     req.Notes,
 	})
 	if err != nil {
 		return h.handleError(c, err)

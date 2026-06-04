@@ -26,10 +26,10 @@ const (
 
 // XenditClient is an HTTP client for the Xendit Invoice API.
 type XenditClient struct {
-	secretKey        string
-	webhookToken     string // Webhook Verification Token from Xendit Dashboard → Settings → Callbacks
-	baseURL          string
-	httpClient       *http.Client
+	secretKey    string
+	webhookToken string // Webhook Verification Token from Xendit Dashboard → Settings → Callbacks
+	baseURL      string
+	httpClient   *http.Client
 }
 
 // NewXenditClient creates a new Xendit client.
@@ -85,7 +85,7 @@ type XenditCreateInvoiceRequest struct {
 	CustomerPhone   string `json:"-"` // mapped to customer object
 	SuccessRedirect string `json:"success_redirect_url,omitempty"`
 	FailureRedirect string `json:"failure_redirect_url,omitempty"`
-	CallbackURL     string `json:"-"` // set via header X-CALLBACK-URL
+	CallbackURL     string `json:"-"`                          // set via header X-CALLBACK-URL
 	InvoiceDuration int64  `json:"invoice_duration,omitempty"` // seconds, default 86400 (24h)
 }
 
@@ -102,18 +102,18 @@ type XenditCreateInvoiceResponse struct {
 // XenditCallbackPayload is the webhook notification body from Xendit.
 // Reference: https://developers.xendit.co/api-reference/#invoice-callback
 type XenditCallbackPayload struct {
-	ID                     string  `json:"id"`
-	ExternalID             string  `json:"external_id"`
-	UserID                 string  `json:"user_id"`
-	Status                 string  `json:"status"` // PAID, EXPIRED
-	Amount                 float64 `json:"amount"`
-	PaidAmount             float64 `json:"paid_amount"`
-	PaymentMethod          string  `json:"payment_method"`
-	PaymentChannel         string  `json:"payment_channel"`
-	PaymentDestination     string  `json:"payment_destination"`
-	PaidAt                 string  `json:"paid_at,omitempty"`
-	MerchantName           string  `json:"merchant_name"`
-	Currency               string  `json:"currency"`
+	ID                 string  `json:"id"`
+	ExternalID         string  `json:"external_id"`
+	UserID             string  `json:"user_id"`
+	Status             string  `json:"status"` // PAID, EXPIRED
+	Amount             float64 `json:"amount"`
+	PaidAmount         float64 `json:"paid_amount"`
+	PaymentMethod      string  `json:"payment_method"`
+	PaymentChannel     string  `json:"payment_channel"`
+	PaymentDestination string  `json:"payment_destination"`
+	PaidAt             string  `json:"paid_at,omitempty"`
+	MerchantName       string  `json:"merchant_name"`
+	Currency           string  `json:"currency"`
 }
 
 // CreateInvoice creates a Xendit Invoice and returns the payment URL.

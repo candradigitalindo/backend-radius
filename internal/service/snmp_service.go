@@ -95,7 +95,7 @@ const (
 	oidHiosoPonPortIndex = ".1.3.6.1.4.1.25355.3.1.8.3.1.1"
 	oidHiosoOLTInfo      = ".1.3.6.1.4.1.25355.3.1.8.1.1.2"
 	oidHiosoTemperature  = ".1.3.6.1.4.1.25355.3.1.8.1.1.9"
-	oidHiosoUNITable = ".1.3.6.1.4.1.25355.3.2.6.1.2.1.1.1"
+	oidHiosoUNITable     = ".1.3.6.1.4.1.25355.3.2.6.1.2.1.1.1"
 )
 
 type OLTMonitorResult struct {

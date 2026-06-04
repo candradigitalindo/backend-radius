@@ -176,19 +176,39 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 
 	if pkgID != nil && pkgJoinID != nil {
 		c.Package = &model.Package{ID: *pkgJoinID}
-		if pkgName != nil { c.Package.Name = *pkgName }
-		if pkgBandwidthUp != nil { c.Package.BandwidthUp = *pkgBandwidthUp }
-		if pkgBandwidthDown != nil { c.Package.BandwidthDown = *pkgBandwidthDown }
-		if pkgPrice != nil { c.Package.Price = *pkgPrice }
-		if pkgBurstLimit != nil { c.Package.BurstLimit = *pkgBurstLimit }
-		if pkgAddressList != nil { c.Package.AddressList = *pkgAddressList }
+		if pkgName != nil {
+			c.Package.Name = *pkgName
+		}
+		if pkgBandwidthUp != nil {
+			c.Package.BandwidthUp = *pkgBandwidthUp
+		}
+		if pkgBandwidthDown != nil {
+			c.Package.BandwidthDown = *pkgBandwidthDown
+		}
+		if pkgPrice != nil {
+			c.Package.Price = *pkgPrice
+		}
+		if pkgBurstLimit != nil {
+			c.Package.BurstLimit = *pkgBurstLimit
+		}
+		if pkgAddressList != nil {
+			c.Package.AddressList = *pkgAddressList
+		}
 	}
 	if rtID != nil && rtJoinID != nil {
 		c.Router = &model.Router{ID: *rtJoinID}
-		if rtName != nil { c.Router.Name = *rtName }
-		if rtVPNIP != nil { c.Router.VPNIP = *rtVPNIP }
-		if rtRADIUSSecret != nil { c.Router.RADIUSSecret = *rtRADIUSSecret }
-		if rtCoAPort != nil { c.Router.CoAPort = *rtCoAPort }
+		if rtName != nil {
+			c.Router.Name = *rtName
+		}
+		if rtVPNIP != nil {
+			c.Router.VPNIP = *rtVPNIP
+		}
+		if rtRADIUSSecret != nil {
+			c.Router.RADIUSSecret = *rtRADIUSSecret
+		}
+		if rtCoAPort != nil {
+			c.Router.CoAPort = *rtCoAPort
+		}
 	}
 
 	return &c, nil
@@ -266,8 +286,12 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 		return nil, 0, err
 	}
 
-	if filter.PerPage <= 0 { filter.PerPage = 20 }
-	if filter.Page <= 0 { filter.Page = 1 }
+	if filter.PerPage <= 0 {
+		filter.PerPage = 20
+	}
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
 	offset := (filter.Page - 1) * filter.PerPage
 
 	dataQuery := fmt.Sprintf(`
@@ -293,7 +317,9 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 	args = append(args, filter.PerPage, offset)
 
 	rows, err := r.db.Query(ctx, dataQuery, args...)
-	if err != nil { return nil, 0, err }
+	if err != nil {
+		return nil, 0, err
+	}
 	defer rows.Close()
 
 	var customers []model.Customer
@@ -321,7 +347,9 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 			&pkgBurstLimit, &pkgAddressList, &pkgIsActive,
 			&rtJoinID, &rtName, &rtVPNIP, &rtRADIUSSecret, &rtCoAPort, &rtIsActive,
 			&isOnline,
-		); err != nil { return nil, 0, err }
+		); err != nil {
+			return nil, 0, err
+		}
 
 		if c.Status == "isolated" {
 			c.ConnectionStatus = "isolated"
@@ -335,21 +363,45 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 		c.ODPPortID = odpPortID
 		if pkgID != nil && pkgJoinID != nil {
 			c.Package = &model.Package{ID: *pkgJoinID}
-			if pkgName != nil { c.Package.Name = *pkgName }
-			if pkgBandwidthUp != nil { c.Package.BandwidthUp = *pkgBandwidthUp }
-			if pkgBandwidthDown != nil { c.Package.BandwidthDown = *pkgBandwidthDown }
-			if pkgPrice != nil { c.Package.Price = *pkgPrice }
-			if pkgBurstLimit != nil { c.Package.BurstLimit = *pkgBurstLimit }
-			if pkgAddressList != nil { c.Package.AddressList = *pkgAddressList }
-			if pkgIsActive != nil { c.Package.IsActive = *pkgIsActive }
+			if pkgName != nil {
+				c.Package.Name = *pkgName
+			}
+			if pkgBandwidthUp != nil {
+				c.Package.BandwidthUp = *pkgBandwidthUp
+			}
+			if pkgBandwidthDown != nil {
+				c.Package.BandwidthDown = *pkgBandwidthDown
+			}
+			if pkgPrice != nil {
+				c.Package.Price = *pkgPrice
+			}
+			if pkgBurstLimit != nil {
+				c.Package.BurstLimit = *pkgBurstLimit
+			}
+			if pkgAddressList != nil {
+				c.Package.AddressList = *pkgAddressList
+			}
+			if pkgIsActive != nil {
+				c.Package.IsActive = *pkgIsActive
+			}
 		}
 		if rtID != nil && rtJoinID != nil {
 			c.Router = &model.Router{ID: *rtJoinID}
-			if rtName != nil { c.Router.Name = *rtName }
-			if rtVPNIP != nil { c.Router.VPNIP = *rtVPNIP }
-			if rtRADIUSSecret != nil { c.Router.RADIUSSecret = *rtRADIUSSecret }
-			if rtCoAPort != nil { c.Router.CoAPort = *rtCoAPort }
-			if rtIsActive != nil { c.Router.IsActive = *rtIsActive }
+			if rtName != nil {
+				c.Router.Name = *rtName
+			}
+			if rtVPNIP != nil {
+				c.Router.VPNIP = *rtVPNIP
+			}
+			if rtRADIUSSecret != nil {
+				c.Router.RADIUSSecret = *rtRADIUSSecret
+			}
+			if rtCoAPort != nil {
+				c.Router.CoAPort = *rtCoAPort
+			}
+			if rtIsActive != nil {
+				c.Router.IsActive = *rtIsActive
+			}
 		}
 		customers = append(customers, c)
 	}
@@ -358,7 +410,9 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 
 func (r *customerRepository) SetIsolated(ctx context.Context, tenantID, customerID string, isolatedAt *time.Time) error {
 	status := "active"
-	if isolatedAt != nil { status = "isolated" }
+	if isolatedAt != nil {
+		status = "isolated"
+	}
 	query := `UPDATE customers SET status = $1, isolated_at = $2, updated_at = NOW() WHERE id = $3 AND tenant_id = $4`
 	_, err := r.db.Exec(ctx, query, status, isolatedAt, customerID, tenantID)
 	return err
@@ -393,7 +447,9 @@ func (r *customerRepository) FindByPPPoEUsername(ctx context.Context, tenantID, 
 		&pkgBurstLimit, &pkgAddressList, &pkgIsActive,
 		&rtID, &rtVPNIP, &rtSecret, &rtCoAPort,
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	c.PackageID = pID
 	c.RouterID = rID
 	if pID != nil && pkgID != nil {
@@ -409,7 +465,9 @@ func (r *customerRepository) FindByPPPoEUsernameGlobal(ctx context.Context, user
 	query := `SELECT id, tenant_id, customer_code, name, pppoe_username, status FROM customers WHERE pppoe_username = $1 LIMIT 1`
 	var c model.Customer
 	err := r.db.QueryRow(ctx, query, username).Scan(&c.ID, &c.TenantID, &c.CustomerCode, &c.Name, &c.PPPoEUsername, &c.Status)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
@@ -434,14 +492,24 @@ func (r *customerRepository) FindByCode(ctx context.Context, tenantID, customerC
 	query := `SELECT c.id, c.tenant_id, c.customer_code, c.name FROM customers c WHERE c.customer_code = $1 AND c.tenant_id = $2 LIMIT 1`
 	var c model.Customer
 	err := r.db.QueryRow(ctx, query, customerCode, tenantID).Scan(&c.ID, &c.TenantID, &c.CustomerCode, &c.Name)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
-func (r *customerRepository) FindByCodeGlobal(ctx context.Context, customerCode string) ([]model.Customer, error) { return nil, nil }
-func (r *customerRepository) FindByPhone(ctx context.Context, tenantID, phone string) (*model.Customer, error) { return nil, nil }
-func (r *customerRepository) FindByEmail(ctx context.Context, tenantID, email string) (*model.Customer, error) { return nil, nil }
-func (r *customerRepository) UpdateStatus(ctx context.Context, tenantID, id, status string) error { return nil }
+func (r *customerRepository) FindByCodeGlobal(ctx context.Context, customerCode string) ([]model.Customer, error) {
+	return nil, nil
+}
+func (r *customerRepository) FindByPhone(ctx context.Context, tenantID, phone string) (*model.Customer, error) {
+	return nil, nil
+}
+func (r *customerRepository) FindByEmail(ctx context.Context, tenantID, email string) (*model.Customer, error) {
+	return nil, nil
+}
+func (r *customerRepository) UpdateStatus(ctx context.Context, tenantID, id, status string) error {
+	return nil
+}
 func (r *customerRepository) CountByCodePrefix(ctx context.Context, tenantID, prefix string) (int, error) {
 	var count int
 	err := r.db.QueryRow(ctx,
@@ -468,9 +536,13 @@ func (r *customerRepository) CountActive(ctx context.Context, tenantID string) (
 	).Scan(&count)
 	return count, err
 }
-func (r *customerRepository) UpdateODPPortID(ctx context.Context, customerID string, odpPortID *string) error { return nil }
+func (r *customerRepository) UpdateODPPortID(ctx context.Context, customerID string, odpPortID *string) error {
+	return nil
+}
 func (r *customerRepository) ClearODPPortID(ctx context.Context, odpPortID string) error { return nil }
-func (r *customerRepository) UpdatePasswordHash(ctx context.Context, tenantID, customerID, hash string) error { return nil }
+func (r *customerRepository) UpdatePasswordHash(ctx context.Context, tenantID, customerID, hash string) error {
+	return nil
+}
 
 func (r *customerRepository) FindByReferralCode(ctx context.Context, tenantID, referralCode string) (*model.Customer, error) {
 	var customerID string

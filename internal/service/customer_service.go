@@ -115,25 +115,24 @@ type CreateCustomerInput struct {
 	ReferralCodeUsed string
 }
 
-
 type UpdateCustomerProfileInput struct {
-	Name            string
-	NIK             string
-	Phone           string
-	Email           string
-	Address         string
-	Latitude        *float64
-	Longitude       *float64
-	Notes           string
+	Name      string
+	NIK       string
+	Phone     string
+	Email     string
+	Address   string
+	Latitude  *float64
+	Longitude *float64
+	Notes     string
 }
 
 type UpdateCustomerAccessInput struct {
-	ConnectionType  string
-	PPPoEUsername   string
-	PPPoEPassword   string
-	IPAddress       string
-	RouterID        *string
-	ODPPortID       *string
+	ConnectionType string
+	PPPoEUsername  string
+	PPPoEPassword  string
+	IPAddress      string
+	RouterID       *string
+	ODPPortID      *string
 }
 
 type UpdateCustomerServiceInput struct {
@@ -209,33 +208,33 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 	pppoePassword := generatePPPoEPassword()
 
 	customer := &model.Customer{
-		TenantID:        input.TenantID,
-		CustomerCode:    code,
-		Name:            input.Name,
-		NIK:             input.NIK,
-		Phone:           input.Phone,
-		Email:           input.Email,
-		Address:         input.Address,
-		Latitude:        input.Latitude,
-		Longitude:       input.Longitude,
-		ConnectionType:  input.ConnectionType,
-		PPPoEUsername:   pppoeUsername,
-		PPPoEPassword:   pppoePassword,
-		IPAddress:       input.IPAddress,
-		PackageID:       input.PackageID,
-		RouterID:        input.RouterID,
-		ODPPortID:       input.ODPPortID,
-		JoinDate:        joinDate,
+		TenantID:         input.TenantID,
+		CustomerCode:     code,
+		Name:             input.Name,
+		NIK:              input.NIK,
+		Phone:            input.Phone,
+		Email:            input.Email,
+		Address:          input.Address,
+		Latitude:         input.Latitude,
+		Longitude:        input.Longitude,
+		ConnectionType:   input.ConnectionType,
+		PPPoEUsername:    pppoeUsername,
+		PPPoEPassword:    pppoePassword,
+		IPAddress:        input.IPAddress,
+		PackageID:        input.PackageID,
+		RouterID:         input.RouterID,
+		ODPPortID:        input.ODPPortID,
+		JoinDate:         joinDate,
 		BillingDate:      billingDate,
 		BillingType:      input.BillingType,
 		BillingDeadline:  billingDeadline,
 		BillingProfileID: input.BillingProfileID,
 		CustomPrice:      input.CustomPrice,
-		Discount:        input.Discount,
-		AdditionalFee:   input.AdditionalFee,
-		FeeDescription:  input.FeeDescription,
-		Status:          "active",
-		Notes:           input.Notes,
+		Discount:         input.Discount,
+		AdditionalFee:    input.AdditionalFee,
+		FeeDescription:   input.FeeDescription,
+		Status:           "active",
+		Notes:            input.Notes,
 	}
 
 	for attempt := 0; attempt < 5; attempt++ {
@@ -523,14 +522,30 @@ func (s *CustomerService) UpdateProfile(ctx context.Context, tenantID, customerI
 		return nil, ErrCustomerNotFound
 	}
 
-	if input.Name != "" { customer.Name = input.Name }
-	if input.NIK != "" { customer.NIK = input.NIK }
-	if input.Phone != "" { customer.Phone = input.Phone }
-	if input.Email != "" { customer.Email = input.Email }
-	if input.Address != "" { customer.Address = input.Address }
-	if input.Latitude != nil { customer.Latitude = input.Latitude }
-	if input.Longitude != nil { customer.Longitude = input.Longitude }
-	if input.Notes != "" { customer.Notes = input.Notes }
+	if input.Name != "" {
+		customer.Name = input.Name
+	}
+	if input.NIK != "" {
+		customer.NIK = input.NIK
+	}
+	if input.Phone != "" {
+		customer.Phone = input.Phone
+	}
+	if input.Email != "" {
+		customer.Email = input.Email
+	}
+	if input.Address != "" {
+		customer.Address = input.Address
+	}
+	if input.Latitude != nil {
+		customer.Latitude = input.Latitude
+	}
+	if input.Longitude != nil {
+		customer.Longitude = input.Longitude
+	}
+	if input.Notes != "" {
+		customer.Notes = input.Notes
+	}
 
 	if err := s.customerRepo.Update(ctx, customer); err != nil {
 		return nil, err
@@ -563,12 +578,24 @@ func (s *CustomerService) UpdateAccess(ctx context.Context, tenantID, customerID
 		s.disconnectCustomer(ctx, customer)
 	}
 
-	if input.ConnectionType != "" { customer.ConnectionType = input.ConnectionType }
-	if input.PPPoEUsername != "" { customer.PPPoEUsername = input.PPPoEUsername }
-	if input.PPPoEPassword != "" { customer.PPPoEPassword = input.PPPoEPassword }
-	if input.IPAddress != "" { customer.IPAddress = input.IPAddress }
-	if input.RouterID != nil { customer.RouterID = input.RouterID }
-	if input.ODPPortID != nil { customer.ODPPortID = input.ODPPortID }
+	if input.ConnectionType != "" {
+		customer.ConnectionType = input.ConnectionType
+	}
+	if input.PPPoEUsername != "" {
+		customer.PPPoEUsername = input.PPPoEUsername
+	}
+	if input.PPPoEPassword != "" {
+		customer.PPPoEPassword = input.PPPoEPassword
+	}
+	if input.IPAddress != "" {
+		customer.IPAddress = input.IPAddress
+	}
+	if input.RouterID != nil {
+		customer.RouterID = input.RouterID
+	}
+	if input.ODPPortID != nil {
+		customer.ODPPortID = input.ODPPortID
+	}
 
 	if err := s.customerRepo.Update(ctx, customer); err != nil {
 		var pgErr *pgconn.PgError
@@ -598,9 +625,13 @@ func (s *CustomerService) UpdateServicePackage(ctx context.Context, tenantID, cu
 		s.disconnectCustomer(ctx, customer)
 	}
 
-	if input.PackageID != nil { customer.PackageID = input.PackageID }
+	if input.PackageID != nil {
+		customer.PackageID = input.PackageID
+	}
 	applyUpdatedCustomerBillingSchedule(customer, input)
-	if input.BillingType != "" { customer.BillingType = normalizeBillingType(input.BillingType) }
+	if input.BillingType != "" {
+		customer.BillingType = normalizeBillingType(input.BillingType)
+	}
 	// For cycle billing, billing dates must always reflect the current tenant settings.
 	if billing.NormalizeBillingType(customer.BillingType) == "cycle" && s.tenantRepo != nil {
 		if t, err := s.tenantRepo.FindByID(ctx, tenantID); err == nil && t != nil {
@@ -614,10 +645,18 @@ func (s *CustomerService) UpdateServicePackage(ctx context.Context, tenantID, cu
 			}
 		}
 	}
-	if input.CustomPrice != nil { customer.CustomPrice = input.CustomPrice }
-	if input.Discount != nil { customer.Discount = *input.Discount }
-	if input.AdditionalFee != nil { customer.AdditionalFee = *input.AdditionalFee }
-	if input.FeeDescription != "" { customer.FeeDescription = input.FeeDescription }
+	if input.CustomPrice != nil {
+		customer.CustomPrice = input.CustomPrice
+	}
+	if input.Discount != nil {
+		customer.Discount = *input.Discount
+	}
+	if input.AdditionalFee != nil {
+		customer.AdditionalFee = *input.AdditionalFee
+	}
+	if input.FeeDescription != "" {
+		customer.FeeDescription = input.FeeDescription
+	}
 	// BillingProfileID: diset langsung di sini HANYA jika bukan dari ChangeBillingProfile
 	// (ChangeBillingProfile menangani pending logic sendiri dan tidak masuk ke sini)
 
@@ -671,8 +710,12 @@ func stringPtrValue(value *string) string {
 
 func (s *CustomerService) Delete(ctx context.Context, tenantID, customerID string) error {
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, customerID)
-	if err != nil { return err }
-	if customer == nil { return ErrCustomerNotFound }
+	if err != nil {
+		return err
+	}
+	if customer == nil {
+		return ErrCustomerNotFound
+	}
 	return s.customerRepo.Delete(ctx, tenantID, customerID)
 }
 
@@ -691,8 +734,12 @@ func normalizeBillingType(t string) string {
 
 func parseJoinDate(s string) time.Time {
 	if s != "" {
-		if parsed, err := time.Parse("2006-01-02", s); err == nil { return parsed }
-		if parsed, err := time.Parse(time.RFC3339, s); err == nil { return parsed }
+		if parsed, err := time.Parse("2006-01-02", s); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse(time.RFC3339, s); err == nil {
+			return parsed
+		}
 	}
 	return time.Now()
 }
@@ -700,20 +747,26 @@ func parseJoinDate(s string) time.Time {
 func (s *CustomerService) NextCode(ctx context.Context, tenantID string) (string, error) {
 	prefix := time.Now().Format("060102")
 	count, err := s.customerRepo.CountByCodePrefix(ctx, tenantID, prefix)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("%s%03d", prefix, count+1), nil
 }
 
 func (s *CustomerService) generatePPPoEUsername(ctx context.Context, tenantID, phone string) (string, error) {
 	digits := ""
 	for _, ch := range phone {
-		if ch >= '0' && ch <= '9' { digits += string(ch) }
+		if ch >= '0' && ch <= '9' {
+			digits += string(ch)
+		}
 	}
 	last4 := ""
 	if len(digits) >= 4 {
 		last4 = digits[len(digits)-4:]
 	} else if len(digits) > 0 {
-		for len(digits) < 4 { digits = "0" + digits }
+		for len(digits) < 4 {
+			digits = "0" + digits
+		}
 		last4 = digits
 	} else {
 		// no phone: use 4 random digits
@@ -724,10 +777,16 @@ func (s *CustomerService) generatePPPoEUsername(ctx context.Context, tenantID, p
 	}
 	prefix := time.Now().Format("060102") + last4
 	count, err := s.customerRepo.CountByPPPoEPrefix(ctx, tenantID, prefix)
-	if err != nil { return "", err }
-	if count == 0 { return prefix, nil }
+	if err != nil {
+		return "", err
+	}
+	if count == 0 {
+		return prefix, nil
+	}
 	suffix := string(rune('a' + count - 1))
-	if count > 26 { suffix = fmt.Sprintf("%d", count) }
+	if count > 26 {
+		suffix = fmt.Sprintf("%d", count)
+	}
 	return prefix + suffix, nil
 }
 
@@ -743,9 +802,15 @@ func generatePPPoEPassword() string {
 
 func (s *CustomerService) Isolate(ctx context.Context, tenantID, customerID string) error {
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, customerID)
-	if err != nil { return err }
-	if customer == nil { return ErrCustomerNotFound }
-	if customer.Status != "active" { return ErrCustomerNotActive }
+	if err != nil {
+		return err
+	}
+	if customer == nil {
+		return ErrCustomerNotFound
+	}
+	if customer.Status != "active" {
+		return ErrCustomerNotActive
+	}
 	s.disconnectCustomer(ctx, customer)
 	now := time.Now()
 	return s.customerRepo.SetIsolated(ctx, tenantID, customerID, &now)
@@ -753,15 +818,25 @@ func (s *CustomerService) Isolate(ctx context.Context, tenantID, customerID stri
 
 func (s *CustomerService) Activate(ctx context.Context, tenantID, customerID string) error {
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, customerID)
-	if err != nil { return err }
-	if customer == nil { return ErrCustomerNotFound }
-	if customer.Status == "active" { return ErrCustomerAlreadyActive }
+	if err != nil {
+		return err
+	}
+	if customer == nil {
+		return ErrCustomerNotFound
+	}
+	if customer.Status == "active" {
+		return ErrCustomerAlreadyActive
+	}
 	return s.customerRepo.SetIsolated(ctx, tenantID, customerID, nil)
 }
 
 func (s *CustomerService) disconnectCustomer(ctx context.Context, customer *model.Customer) {
-	if customer.Router == nil || customer.PPPoEUsername == "" { return }
+	if customer.Router == nil || customer.PPPoEUsername == "" {
+		return
+	}
 	session, err := s.sessionRepo.FindActiveByUsername(ctx, customer.TenantID, customer.PPPoEUsername)
-	if err != nil || session == nil { return }
+	if err != nil || session == nil {
+		return
+	}
 	_ = radiuspkg.DisconnectUser(customer.Router.VPNIP, customer.Router.CoAPort, customer.Router.RADIUSSecret, customer.PPPoEUsername, session.SessionID)
 }

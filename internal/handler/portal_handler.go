@@ -23,17 +23,20 @@ import (
 // PortalHandler serves customer portal web endpoints.
 // Customer authentication is fully separated from the staff/admin users table.
 type PortalHandler struct {
-	customerRepo  repository.CustomerRepository
-	invoiceRepo   repository.InvoiceRepository
-	ticketRepo    repository.TicketRepository
-	paymentRepo   repository.PaymentRepository
-	tenantRepo    repository.TenantRepository
-	reminderRepo  repository.ReminderRepository
-	ontRepo       repository.ONTRepository
-	genieacsSvc   GenieACSProvisioner
-	tokenManager  *token.Manager
-	redis         *redis.Client
-	waClient      *whatsapp.Client
+	customerRepo   repository.CustomerRepository
+	invoiceRepo    repository.InvoiceRepository
+	ticketRepo     repository.TicketRepository
+	paymentRepo    repository.PaymentRepository
+	tenantRepo     repository.TenantRepository
+	reminderRepo   repository.ReminderRepository
+	ontRepo        repository.ONTRepository
+	packageRepo    repository.PackageRepository
+	rewardRepo     repository.RewardRepository
+	invoiceService *service.InvoiceService
+	genieacsSvc    GenieACSProvisioner
+	tokenManager   *token.Manager
+	redis          *redis.Client
+	waClient       *whatsapp.Client
 }
 
 // GenieACSProvisioner is a minimal interface for portal device management.
@@ -72,6 +75,24 @@ func (h *PortalHandler) WithResetDeps(rdb *redis.Client, wa *whatsapp.Client) *P
 func (h *PortalHandler) WithDeviceService(ontRepo repository.ONTRepository, genie GenieACSProvisioner) *PortalHandler {
 	h.ontRepo = ontRepo
 	h.genieacsSvc = genie
+	return h
+}
+
+// WithPackageRepo injects the package repository for listing packages in portal.
+func (h *PortalHandler) WithPackageRepo(repo repository.PackageRepository) *PortalHandler {
+	h.packageRepo = repo
+	return h
+}
+
+// WithRewardRepo injects the reward repository for referral info in portal.
+func (h *PortalHandler) WithRewardRepo(repo repository.RewardRepository) *PortalHandler {
+	h.rewardRepo = repo
+	return h
+}
+
+// WithInvoiceService injects the invoice service for gateway payments in portal.
+func (h *PortalHandler) WithInvoiceService(svc *service.InvoiceService) *PortalHandler {
+	h.invoiceService = svc
 	return h
 }
 
@@ -769,4 +790,184 @@ func (h *PortalHandler) ResetPasswordWithPIN(c *fiber.Ctx) error {
 	h.redis.Del(c.Context(), redisKey)
 
 	return c.JSON(fiber.Map{"message": "Password berhasil direset. Silakan login dengan password baru."})
+}
+
+// GetAvailablePackages returns all active packages the customer can upgrade/downgrade to.
+// GET /portal/packages
+func (h *PortalHandler) GetAvailablePackages(c *fiber.Ctx) error {
+	if h.packageRepo == nil {
+		return c.JSON(fiber.Map{"data": []interface{}{}})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+	active := true
+	pkgs, _, err := h.packageRepo.List(c.Context(), tenantID, repository.PackageFilter{
+		Active:  &active,
+		Page:    1,
+		PerPage: 100,
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat paket"})
+	}
+	return c.JSON(fiber.Map{"data": pkgs})
+}
+
+// RequestPackageChange submits a package change request (upgrade/downgrade) as a ticket.
+// POST /portal/change-package
+func (h *PortalHandler) RequestPackageChange(c *fiber.Ctx) error {
+	customer, err := h.resolveCustomer(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Data pelanggan tidak ditemukan"})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	var req struct {
+		PackageID   string `json:"package_id"`
+		PackageName string `json:"package_name"`
+		ChangeType  string `json:"change_type"` // upgrade or downgrade
+		Notes       string `json:"notes"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+	if req.PackageID == "" || req.PackageName == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Paket tujuan wajib dipilih"})
+	}
+	changeTypeLabel := "Upgrade"
+	if req.ChangeType == "downgrade" {
+		changeTypeLabel = "Downgrade"
+	}
+	subject := fmt.Sprintf("[Permintaan %s Paket] ke %s", changeTypeLabel, req.PackageName)
+	desc := fmt.Sprintf("Pelanggan mengajukan permintaan %s paket ke: %s (ID: %s).",
+		strings.ToLower(changeTypeLabel), req.PackageName, req.PackageID)
+	if req.Notes != "" {
+		desc += "\n\nCatatan: " + req.Notes
+	}
+
+	ticket := &model.Ticket{
+		TenantID:    tenantID,
+		CustomerID:  customer.ID,
+		Subject:     subject,
+		Description: desc,
+		Category:    "billing",
+		Priority:    "medium",
+		Status:      "open",
+	}
+	if err := h.ticketRepo.Create(c.Context(), ticket); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat permintaan perubahan paket"})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Permintaan perubahan paket telah dikirim. Tim kami akan menghubungi Anda segera.",
+		"ticket":  ticket,
+	})
+}
+
+// GetReferralInfo returns the customer's referral code, referral history, and reward balance.
+// GET /portal/referral
+func (h *PortalHandler) GetReferralInfo(c *fiber.Ctx) error {
+	customer, err := h.resolveCustomer(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Data pelanggan tidak ditemukan"})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	resp := fiber.Map{
+		"referral_code": customer.ReferralCode,
+		"referrals":     []interface{}{},
+		"balance":       int64(0),
+		"claims":        []interface{}{},
+	}
+
+	if h.rewardRepo == nil {
+		return c.JSON(fiber.Map{"data": resp})
+	}
+
+	refs, _, _ := h.rewardRepo.ListReferrals(c.Context(), tenantID, repository.ReferralFilter{
+		CustomerID: customer.ID,
+		Page:       1,
+		PerPage:    50,
+	})
+	if refs != nil {
+		resp["referrals"] = refs
+	}
+
+	balance, _ := h.rewardRepo.GetCustomerBalance(c.Context(), tenantID, customer.ID)
+	resp["balance"] = balance
+
+	claims, _, _ := h.rewardRepo.ListClaims(c.Context(), tenantID, repository.ClaimFilter{
+		CustomerID: customer.ID,
+		Page:       1,
+		PerPage:    20,
+	})
+	if claims != nil {
+		resp["claims"] = claims
+	}
+
+	return c.JSON(fiber.Map{"data": resp})
+}
+
+// PayInvoiceGateway initiates an online payment for an invoice via the tenant's payment gateway.
+// POST /portal/invoices/:id/pay-gateway
+func (h *PortalHandler) PayInvoiceGateway(c *fiber.Ctx) error {
+	customer, err := h.resolveCustomer(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Data pelanggan tidak ditemukan"})
+	}
+	tenantID, _ := c.Locals("tenant_id").(string)
+	invoiceID := c.Params("id")
+
+	invoice, err := h.invoiceRepo.FindByID(c.Context(), tenantID, invoiceID)
+	if err != nil || invoice == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Tagihan tidak ditemukan"})
+	}
+	if invoice.CustomerID != customer.ID {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Akses ditolak"})
+	}
+	if invoice.Status == "paid" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Tagihan sudah dibayar"})
+	}
+	if h.invoiceService == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Layanan pembayaran online tidak tersedia"})
+	}
+
+	var req struct {
+		PaymentMethod string `json:"payment_method"`
+		ReturnURL     string `json:"return_url"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+	if req.PaymentMethod == "" {
+		req.PaymentMethod = "qris"
+	}
+
+	result, err := h.invoiceService.CreateGatewayPayment(c.Context(), service.PaymentGatewayInput{
+		TenantID:      tenantID,
+		InvoiceID:     invoiceID,
+		PaymentMethod: req.PaymentMethod,
+		CustomerName:  customer.Name,
+		CustomerEmail: customer.Email,
+		CustomerPhone: customer.Phone,
+		ReturnURL:     req.ReturnURL,
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat link pembayaran: " + err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": result})
+}
+
+// GetPaymentConfig returns whether online payment is available for this tenant.
+// Available = gateway configured (PGAPIKey set) AND in production mode (PGSandbox = false).
+// GET /portal/payment-config
+func (h *PortalHandler) GetPaymentConfig(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	tenant, err := h.tenantRepo.FindByID(c.Context(), tenantID)
+	if err != nil || tenant == nil {
+		return c.JSON(fiber.Map{"data": fiber.Map{"available": false, "provider": ""}})
+	}
+	available := tenant.PGAPIKey != "" && !tenant.PGSandbox
+	return c.JSON(fiber.Map{"data": fiber.Map{
+		"available": available,
+		"provider":  tenant.PGProvider,
+		"sandbox":   tenant.PGSandbox,
+	}})
 }

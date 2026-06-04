@@ -19,10 +19,10 @@ import (
 )
 
 var (
-	ErrTenantNotFound    = errors.New("Tenant tidak ditemukan")
-	ErrSlugAlreadyUsed   = errors.New("Slug sudah digunakan")
-	ErrPhoneAlreadyUsed  = errors.New("Nomor telepon sudah terdaftar, gunakan nomor lain atau login")
-	ErrEmailAlreadyUsed  = errors.New("Email sudah terdaftar, silakan login atau gunakan email lain")
+	ErrTenantNotFound   = errors.New("Tenant tidak ditemukan")
+	ErrSlugAlreadyUsed  = errors.New("Slug sudah digunakan")
+	ErrPhoneAlreadyUsed = errors.New("Nomor telepon sudah terdaftar, gunakan nomor lain atau login")
+	ErrEmailAlreadyUsed = errors.New("Email sudah terdaftar, silakan login atau gunakan email lain")
 )
 
 type TenantService struct {
@@ -58,39 +58,40 @@ func (s *TenantService) WithBaseURL(url string) *TenantService {
 }
 
 type CreateTenantInput struct {
-	Name                string
-	Slug                string
-	Email               string
-	Phone               string
-	Address             string
-	Timezone            string
-	Currency            string
-	BillingCycle        int
-	DueDay              int
-	IsolirDay           int
-	GracePeriod         int
-	DefaultBillingType  string
-	Plan                string
-	MaxCustomers        int
-	Fingerprint         string
-	RegistrationIP      string
+	Name               string
+	Slug               string
+	Email              string
+	Phone              string
+	Address            string
+	Timezone           string
+	Currency           string
+	BillingCycle       int
+	DueDay             int
+	IsolirDay          int
+	GracePeriod        int
+	DefaultBillingType string
+	Plan               string
+	MaxCustomers       int
+	Fingerprint        string
+	RegistrationIP     string
+	SelfRegistration   bool
 }
 
 type UpdateTenantInput struct {
-	Name                  string
-	Email                 string
-	Phone                 string
-	Address               string
-	LogoURL               string
-	Timezone              string
-	Currency              string
-	BillingCycle          int
-	DueDay                int
-	IsolirDay             int
-	GracePeriod           int
-	DefaultBillingType    string
-	DefaultPaymentTiming  string
-	IsActive              bool
+	Name                 string
+	Email                string
+	Phone                string
+	Address              string
+	LogoURL              string
+	Timezone             string
+	Currency             string
+	BillingCycle         int
+	DueDay               int
+	IsolirDay            int
+	GracePeriod          int
+	DefaultBillingType   string
+	DefaultPaymentTiming string
+	IsActive             bool
 }
 
 type AdminUpdateTenantInput struct {
@@ -133,9 +134,6 @@ func (s *TenantService) sendWelcomeMessage(ctx context.Context, tenant *model.Te
 	}
 
 	url := s.baseURL
-	if url == "" {
-		url = "http://10.10.1.2" // Fallback
-	}
 
 	msg := ""
 	if s.reminderRepo != nil && s.tenantRepo != nil {
@@ -258,6 +256,19 @@ func (s *TenantService) Approve(ctx context.Context, tenantID string) error {
 	return s.tenantRepo.Approve(ctx, tenantID)
 }
 
+func (s *TenantService) Delete(ctx context.Context, tenantID string) error {
+	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if tenant == nil {
+		return ErrTenantNotFound
+	}
+	// Preserve billing history: stamp tenant identity before the cascade wipes the FK
+	_ = s.tenantRepo.StampSubscriptionOrders(ctx, tenantID, tenant.Name, tenant.Slug)
+	return s.tenantRepo.Delete(ctx, tenantID)
+}
+
 func (s *TenantService) Create(ctx context.Context, input CreateTenantInput) (*model.Tenant, error) {
 	existing, err := s.tenantRepo.FindBySlug(ctx, input.Slug)
 	if err != nil {
@@ -377,26 +388,27 @@ func (s *TenantService) Create(ctx context.Context, input CreateTenantInput) (*m
 		return nil, err
 	}
 
-	// Create initial owner user for the tenant
-	password, _ := s.generateRandomPassword()
-	if password == "" {
-		password = "password123" // Fallback
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err == nil {
-		user := &model.User{
-			TenantID:     tenant.ID,
-			Name:         tenant.Name,
-			Email:        tenant.Email,
-			PasswordHash: string(hash),
-			Role:         "owner",
-			Phone:        tenant.Phone,
-			IsActive:     true,
+	// Create initial owner user for the tenant (only when registered by superadmin)
+	if !input.SelfRegistration {
+		password, _ := s.generateRandomPassword()
+		if password == "" {
+			password = "password123" // Fallback
 		}
-		if err := s.userRepo.Create(ctx, user); err == nil {
-			// Send welcome message via WhatsApp
-			go s.sendWelcomeMessage(context.Background(), tenant, password)
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err == nil {
+			user := &model.User{
+				TenantID:     tenant.ID,
+				Name:         tenant.Name,
+				Email:        tenant.Email,
+				PasswordHash: string(hash),
+				Role:         "owner",
+				Phone:        tenant.Phone,
+				IsActive:     true,
+			}
+			if err := s.userRepo.Create(ctx, user); err == nil {
+				go s.sendWelcomeMessage(context.Background(), tenant, password)
+			}
 		}
 	}
 

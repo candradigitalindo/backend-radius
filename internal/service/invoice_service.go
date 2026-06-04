@@ -34,6 +34,7 @@ type InvoiceService struct {
 	settingRepo        repository.SettingRepository
 	billingProfileRepo repository.BillingProfileRepository
 	rewardSvc          *RewardService
+	notifSvc           *NotificationService
 	waClient           *whatsapp.Client
 	baseURL            string
 }
@@ -101,6 +102,13 @@ func (s *InvoiceService) WithBillingProfileRepo(r repository.BillingProfileRepos
 	return s
 }
 
+// WithNotificationService enables web-push + in-app notifications for invoice
+// and payment events (in addition to the existing WhatsApp messages).
+func (s *InvoiceService) WithNotificationService(n *NotificationService) *InvoiceService {
+	s.notifSvc = n
+	return s
+}
+
 // WebhookURLs returns the per-tenant webhook callback URLs for a given tenant slug.
 func (s *InvoiceService) WebhookURLs(tenantSlug string) map[string]string {
 	return map[string]string{
@@ -134,13 +142,13 @@ func (s *InvoiceService) ApplyProratedPackageChange(ctx context.Context, tenantI
 
 	// Hitung periode invoice (invoice_date → due_date)
 	// Gunakan 30 hari sebagai basis jika tidak bisa dihitung
-	totalDays := invoice.DueDate.Sub(invoice.CreatedAt.Truncate(24 * time.Hour)).Hours() / 24
+	totalDays := invoice.DueDate.Sub(invoice.CreatedAt.Truncate(24*time.Hour)).Hours() / 24
 	if totalDays <= 0 {
 		totalDays = 30
 	}
 
 	// Sisa hari dari tanggal perubahan ke due_date
-	remainingDays := invoice.DueDate.Sub(now.Truncate(24 * time.Hour)).Hours() / 24
+	remainingDays := invoice.DueDate.Sub(now.Truncate(24*time.Hour)).Hours() / 24
 	if remainingDays <= 0 {
 		return 0, nil // due date sudah lewat, tidak ada prorata
 	}
@@ -767,6 +775,16 @@ Terima kasih. 🙏`
 
 	var reminderItems []whatsapp.ReminderItem
 	for _, item := range items {
+		// Web-push + in-app notification (independent of phone/WhatsApp).
+		if s.notifSvc != nil {
+			pushBody := fmt.Sprintf("Tagihan %s sebesar Rp%s, jatuh tempo %s.",
+				item.invoice.InvoiceNumber,
+				formatInvoiceAmount(item.invoice.TotalAmount),
+				item.invoice.DueDate.Format("02/01/2006"))
+			pushData := fmt.Sprintf(`{"type":"invoice_created","invoice_id":"%s"}`, item.invoice.ID)
+			_ = s.notifSvc.PushAndStore(ctx, tenantID, item.customer.ID, "Tagihan Baru", pushBody, pushData)
+		}
+
 		if item.customer.Phone == "" {
 			continue
 		}
@@ -929,12 +947,25 @@ _Simpan pesan ini sebagai bukti pembayaran._`
 // sendPaymentNotification sends a WhatsApp payment confirmation to the customer.
 // Template diambil dari reminder type "payment_confirmation" jika ada, fallback ke default.
 func (s *InvoiceService) sendPaymentNotification(ctx context.Context, tenantID string, invoice *model.Invoice, paymentMethod string) {
-	if s.waClient == nil {
+	customer, err := s.customerRepo.FindByID(ctx, tenantID, invoice.CustomerID)
+	if err != nil || customer == nil {
 		return
 	}
 
-	customer, err := s.customerRepo.FindByID(ctx, tenantID, invoice.CustomerID)
-	if err != nil || customer == nil || customer.Phone == "" {
+	// Web-push + in-app notification (independent of phone/WhatsApp).
+	if s.notifSvc != nil {
+		amt := invoice.TotalAmount
+		if invoice.PaidAmount != nil {
+			amt = *invoice.PaidAmount
+		}
+		pushBody := fmt.Sprintf("Pembayaran tagihan %s sebesar Rp%s telah diterima. Terima kasih!",
+			invoice.InvoiceNumber, formatInvoiceAmount(amt))
+		pushData := fmt.Sprintf(`{"type":"payment","invoice_id":"%s"}`, invoice.ID)
+		_ = s.notifSvc.PushAndStore(ctx, tenantID, customer.ID, "Pembayaran Berhasil", pushBody, pushData)
+	}
+
+	// WhatsApp confirmation requires a WA client and a phone number.
+	if s.waClient == nil || customer.Phone == "" {
 		return
 	}
 

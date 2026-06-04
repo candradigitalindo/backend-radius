@@ -13,10 +13,10 @@ import (
 
 // InterimResult holds the previous octets so the caller can compute deltas.
 type InterimResult struct {
-	TenantID       string
-	CustomerID     *string
-	PrevInput      int64
-	PrevOutput     int64
+	TenantID        string
+	CustomerID      *string
+	PrevInput       int64
+	PrevOutput      int64
 	PrevSessionTime int
 }
 

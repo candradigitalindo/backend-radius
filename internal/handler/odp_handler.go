@@ -21,37 +21,37 @@ func NewODPHandler(odpService *service.ODPService) *ODPHandler {
 // ODP requests
 
 type createODPRequest struct {
-	OLTID         *string  `json:"olt_id"`
-	PONPortID     *string  `json:"pon_port_id"`
-	SplitterRatio *string  `json:"splitter_ratio"`
-	Name          string   `json:"name"`
-	Address       *string  `json:"address"`
-	Latitude      float64  `json:"latitude"`
-	Longitude     float64  `json:"longitude"`
-	TotalPorts    int      `json:"total_ports"`
-	Sequence      int      `json:"sequence"`
-	CableLengthM  float64  `json:"cable_length_m"`
-	RatioPercent  float64  `json:"ratio_percent"`
-	SplitterType  *string  `json:"splitter_type"`
-	Status        string   `json:"status"`
-	Notes         *string  `json:"notes"`
+	OLTID         *string `json:"olt_id"`
+	PONPortID     *string `json:"pon_port_id"`
+	SplitterRatio *string `json:"splitter_ratio"`
+	Name          string  `json:"name"`
+	Address       *string `json:"address"`
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	TotalPorts    int     `json:"total_ports"`
+	Sequence      int     `json:"sequence"`
+	CableLengthM  float64 `json:"cable_length_m"`
+	RatioPercent  float64 `json:"ratio_percent"`
+	SplitterType  *string `json:"splitter_type"`
+	Status        string  `json:"status"`
+	Notes         *string `json:"notes"`
 }
 
 type updateODPRequest struct {
-	OLTID         *string  `json:"olt_id"`
-	PONPortID     *string  `json:"pon_port_id"`
-	SplitterRatio *string  `json:"splitter_ratio"`
-	Name          string   `json:"name"`
-	Address       *string  `json:"address"`
-	Latitude      float64  `json:"latitude"`
-	Longitude     float64  `json:"longitude"`
-	TotalPorts    int      `json:"total_ports"`
-	Sequence      int      `json:"sequence"`
-	CableLengthM  float64  `json:"cable_length_m"`
-	RatioPercent  float64  `json:"ratio_percent"`
-	SplitterType  *string  `json:"splitter_type"`
-	Status        string   `json:"status"`
-	Notes         *string  `json:"notes"`
+	OLTID         *string `json:"olt_id"`
+	PONPortID     *string `json:"pon_port_id"`
+	SplitterRatio *string `json:"splitter_ratio"`
+	Name          string  `json:"name"`
+	Address       *string `json:"address"`
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	TotalPorts    int     `json:"total_ports"`
+	Sequence      int     `json:"sequence"`
+	CableLengthM  float64 `json:"cable_length_m"`
+	RatioPercent  float64 `json:"ratio_percent"`
+	SplitterType  *string `json:"splitter_type"`
+	Status        string  `json:"status"`
+	Notes         *string `json:"notes"`
 }
 
 func (h *ODPHandler) Create(c *fiber.Ctx) error {

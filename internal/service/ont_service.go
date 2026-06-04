@@ -15,8 +15,8 @@ var (
 )
 
 type ONTService struct {
-	ontRepo     repository.ONTRepository
-	logRepo     repository.CustomerLogRepository
+	ontRepo repository.ONTRepository
+	logRepo repository.CustomerLogRepository
 }
 
 func NewONTService(ontRepo repository.ONTRepository) *ONTService {
@@ -111,10 +111,10 @@ func (s *ONTService) Update(ctx context.Context, tenantID, ontID string, input U
 	if customerChanged && s.logRepo != nil {
 		serial := ont.SerialNumber
 		meta, _ := json.Marshal(map[string]interface{}{
-			"ont_id":          ontID,
-			"serial_number":   serial,
+			"ont_id":           ontID,
+			"serial_number":    serial,
 			"from_customer_id": *oldCustomerID,
-			"to_customer_id":  *newCustomerID,
+			"to_customer_id":   *newCustomerID,
 		})
 
 		_ = s.logRepo.Create(ctx, &model.CustomerLog{

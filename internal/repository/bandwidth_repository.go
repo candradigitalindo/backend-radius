@@ -19,17 +19,17 @@ type BandwidthRepository interface {
 }
 
 type BandwidthSample struct {
-	SessionID    string    `json:"session_id"`
-	SampledAt    time.Time `json:"sampled_at"`
-	IntervalSec  int       `json:"interval_sec"`
-	DownloadBps  int64     `json:"download_bps"`
-	UploadBps    int64     `json:"upload_bps"`
+	SessionID   string    `json:"session_id"`
+	SampledAt   time.Time `json:"sampled_at"`
+	IntervalSec int       `json:"interval_sec"`
+	DownloadBps int64     `json:"download_bps"`
+	UploadBps   int64     `json:"upload_bps"`
 }
 
 type SessionTransferTotal struct {
-	SessionID      string `json:"session_id"`
-	TotalDownload  int64  `json:"total_download"`
-	TotalUpload    int64  `json:"total_upload"`
+	SessionID     string `json:"session_id"`
+	TotalDownload int64  `json:"total_download"`
+	TotalUpload   int64  `json:"total_upload"`
 }
 
 type BandwidthUsage struct {

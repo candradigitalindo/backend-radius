@@ -7,8 +7,8 @@ import (
 	"github.com/candrasyahputra/radius-server/internal/service"
 )
 
-const saTenantID  = "tnt-superadmin" // FK ke tenants.id
-const saWASession = "superadmin"       // identifier sesi WA (bukan FK)
+const saTenantID = "tnt-superadmin" // FK ke tenants.id
+const saWASession = "superadmin"    // identifier sesi WA (bukan FK)
 
 type SASettingsHandler struct {
 	tenantService  *service.TenantService
@@ -66,11 +66,11 @@ func (h *SASettingsHandler) GetSettings(c *fiber.Ctx) error {
 
 type updateSASettingsRequest struct {
 	// WA notification toggles
-	WANotifySubscribe *bool   `json:"wa_notify_subscribe"`
-	WANotifyPayment   *bool   `json:"wa_notify_payment"`
-	WANotifyDueDate   *bool   `json:"wa_notify_due_date"`
-	WANotifyOTP       *bool   `json:"wa_notify_otp"`
-	WANotifyBroadcast *bool   `json:"wa_notify_broadcast"`
+	WANotifySubscribe *bool `json:"wa_notify_subscribe"`
+	WANotifyPayment   *bool `json:"wa_notify_payment"`
+	WANotifyDueDate   *bool `json:"wa_notify_due_date"`
+	WANotifyOTP       *bool `json:"wa_notify_otp"`
+	WANotifyBroadcast *bool `json:"wa_notify_broadcast"`
 	// PG
 	PGProvider   *string `json:"pg_provider"`
 	PGMerchantID *string `json:"pg_merchant_id"`

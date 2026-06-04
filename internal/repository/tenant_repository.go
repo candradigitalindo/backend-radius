@@ -29,6 +29,8 @@ type TenantRepository interface {
 	CountByFingerprint(ctx context.Context, fingerprint string) (int, error)
 	CountByIP(ctx context.Context, ip string) (int, error)
 	Approve(ctx context.Context, tenantID string) error
+	Delete(ctx context.Context, tenantID string) error
+	StampSubscriptionOrders(ctx context.Context, tenantID, tenantName, tenantSlug string) error
 }
 
 type TenantFilter struct {
@@ -360,5 +362,18 @@ func (r *tenantRepository) CountByIP(ctx context.Context, ip string) (int, error
 
 func (r *tenantRepository) Approve(ctx context.Context, tenantID string) error {
 	_, err := r.db.Exec(ctx, "UPDATE tenants SET status = 'active', is_active = true, updated_at = NOW() WHERE id = $1", tenantID)
+	return err
+}
+
+func (r *tenantRepository) Delete(ctx context.Context, tenantID string) error {
+	_, err := r.db.Exec(ctx, "DELETE FROM tenants WHERE id = $1", tenantID)
+	return err
+}
+
+func (r *tenantRepository) StampSubscriptionOrders(ctx context.Context, tenantID, tenantName, tenantSlug string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE subscription_orders SET tenant_name = $1, tenant_slug = $2 WHERE tenant_id = $3 AND tenant_name IS NULL`,
+		tenantName, tenantSlug, tenantID,
+	)
 	return err
 }

@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	cachedIP    string
-	cachedAt    time.Time
-	cacheMu     sync.Mutex
-	cacheTTL    = 10 * time.Minute
+	cachedIP string
+	cachedAt time.Time
+	cacheMu  sync.Mutex
+	cacheTTL = 10 * time.Minute
 )
 
 // GetPublicIP returns the server's public IP address.

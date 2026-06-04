@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -97,7 +98,7 @@ func (s *AuthService) SelectInitialPlan(ctx context.Context, tenantID, planSlug 
 	// Update tenant plan and expiry
 	tenant.Plan = plan.Slug
 	tenant.MaxCustomers = plan.MaxCustomers
-	
+
 	now := time.Now()
 	if plan.DurationMonths > 0 {
 		expiry := now.AddDate(0, int(plan.DurationMonths), 0)
@@ -217,11 +218,11 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 		return nil, errors.New("registrasi hanya untuk membuat tenant baru")
 	}
 
-	existing, err := s.userRepo.FindByEmail(ctx, input.TenantID, input.Email)
+	existingList, err := s.userRepo.FindByEmailOnly(ctx, input.Email)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
+	if len(existingList) > 0 {
 		return nil, ErrEmailAlreadyExists
 	}
 
@@ -244,13 +245,14 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 	if user.TenantID == "" {
 		if s.tenantService != nil {
 			tenant, err := s.tenantService.Create(ctx, CreateTenantInput{
-				Name:           input.Name,
-				Slug:           id.New(),
-				Email:          input.Email,
-				Phone:          input.Phone,
-				Plan:           "", // Empty plan initially
-				Fingerprint:    input.Fingerprint,
-				RegistrationIP: input.IP,
+				Name:             input.Name,
+				Slug:             id.New(),
+				Email:            input.Email,
+				Phone:            input.Phone,
+				Plan:             "", // Empty plan initially
+				Fingerprint:      input.Fingerprint,
+				RegistrationIP:   input.IP,
+				SelfRegistration: true,
 			})
 			if err != nil {
 				return nil, err
@@ -346,9 +348,16 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*AuthRespons
 		return nil, ErrAccountInactive
 	}
 
-	// Check tenant status
+	// Check tenant status. Distinguish a real DB error (propagate → 500 + log)
+	// from a genuinely missing tenant (treat as invalid credentials). Mapping DB
+	// errors to ErrInvalidCredentials hides the real cause behind a misleading
+	// "Email atau password salah" message.
 	tenant, err := s.tenantRepo.FindByID(ctx, user.TenantID)
-	if err != nil || tenant == nil {
+	if err != nil {
+		log.Printf("Login: gagal memuat tenant %q untuk user %q: %v", user.TenantID, user.Email, err)
+		return nil, fmt.Errorf("gagal memuat data tenant: %w", err)
+	}
+	if tenant == nil {
 		return nil, ErrInvalidCredentials
 	}
 	if tenant.Status == "pending" {
@@ -373,14 +382,10 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*AuthRespons
 		return nil, err
 	}
 
+	// Reuse the tenant already loaded above for plan info — no second query.
 	resp := s.toUserResponseWithPerms(ctx, user)
-	if user.TenantID != "" {
-		tenant, err := s.tenantRepo.FindByID(ctx, user.TenantID)
-		if err == nil && tenant != nil {
-			resp.Plan = tenant.Plan
-			resp.PlanExpiresAt = tenant.PlanExpiresAt
-		}
-	}
+	resp.Plan = tenant.Plan
+	resp.PlanExpiresAt = tenant.PlanExpiresAt
 
 	return &AuthResponse{
 		User:      resp,

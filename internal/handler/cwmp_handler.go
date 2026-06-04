@@ -107,7 +107,9 @@ func (h *CWMPHandler) tagDeviceViaUsername(body []byte) {
 		}
 
 		for _, t := range device.Tags {
-			if t == tag { return }
+			if t == tag {
+				return
+			}
 		}
 
 		tagCtx, tagCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -143,10 +145,14 @@ func extractSerialFromInform(body []byte) string {
 	const open = "<SerialNumber>"
 	const close = "</SerialNumber>"
 	idx := strings.Index(s, open)
-	if idx < 0 { return "" }
+	if idx < 0 {
+		return ""
+	}
 	start := idx + len(open)
 	end := strings.Index(s[start:], close)
-	if end < 0 { return "" }
+	if end < 0 {
+		return ""
+	}
 	return strings.TrimSpace(s[start : start+end])
 }
 

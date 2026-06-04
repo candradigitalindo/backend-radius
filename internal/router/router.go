@@ -126,7 +126,9 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	reportService := service.NewReportService(reportRepo)
 	exportService := service.NewExportService(reportRepo)
 	bandwidthService := service.NewBandwidthService(bandwidthRepo)
-	notificationService := service.NewNotificationService(notificationRepo, customerRepo, deps.Config.FCM.ServerKey, deps.Config.FCM.Enabled).WithWAClient(waClient)
+	notificationService := service.NewNotificationService(notificationRepo, customerRepo, deps.Config.FCM.ProjectID, deps.Config.FCM.CredentialsFile, deps.Config.FCM.Enabled).WithWAClient(waClient)
+	// Enable web-push + in-app notifications for invoice/payment events.
+	invoiceService.WithNotificationService(notificationService)
 	ipamService := service.NewIPAMService(ipamRepo)
 	resellerService := service.NewResellerService(resellerRepo)
 	rewardService := service.NewRewardService(rewardRepo).WithInvoice(invoiceRepo)
@@ -285,6 +287,9 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	portalHandler.WithResetDeps(deps.Redis, waClient)
 	portalHandler.WithReminderRepo(reminderRepo)
 	portalHandler.WithDeviceService(ontRepo, genieacsService)
+	portalHandler.WithPackageRepo(packageRepo)
+	portalHandler.WithRewardRepo(rewardRepo)
+	portalHandler.WithInvoiceService(invoiceService)
 	publicPortal := v1.Group("/public/portal")
 	publicPortal.Get("/:slug", publicLimiter, portalHandler.GetTenantInfo)
 	publicPortal.Post("/:slug/login", publicLimiter, portalHandler.PortalLogin)
@@ -329,6 +334,14 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	portal.Get("/device", portalHandler.GetDevice)
 	portal.Put("/device/wifi", portalHandler.SetDeviceWiFi)
 	portal.Post("/device/reboot", portalHandler.RebootDevice)
+	// Web push (PWA) device token registration
+	portal.Post("/push/register", notificationHandler.RegisterDevice)
+	portal.Post("/push/unregister", notificationHandler.UnregisterDevice)
+	portal.Get("/packages", portalHandler.GetAvailablePackages)
+	portal.Post("/change-package", portalHandler.RequestPackageChange)
+	portal.Get("/referral", portalHandler.GetReferralInfo)
+	portal.Get("/payment-config", portalHandler.GetPaymentConfig)
+	portal.Post("/invoices/:id/pay-gateway", portalHandler.PayInvoiceGateway)
 
 	// Protected routes (staff only)
 	protected := v1.Group("/", authMiddleware.Handle(), middleware.TenantGuard(), middleware.StaffGuard(), middleware.NewPermissionLoader(roleRepo), middleware.SubscriptionGuard(tenantRepo))
@@ -697,6 +710,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	tenants.Put("/:id", tenantHandler.AdminUpdate)
 	tenants.Post("/:id/approve", tenantHandler.Approve)
 	tenants.Post("/:id/reset-password", adminHandler.ResetTenantPassword)
+	tenants.Delete("/:id", tenantHandler.Delete)
 
 	// SuperAdmin (Pengelola) routes — cross-tenant management
 	admin := v1.Group("/admin", authMiddleware.Handle(), middleware.RoleGuard("superadmin"))

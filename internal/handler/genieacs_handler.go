@@ -109,12 +109,12 @@ type setWiFiRequest struct {
 	// Default: "11i" jika tidak diisi
 	Security string `json:"security" form:"security"`
 
-	WiFiSSID         string `json:"wifi_ssid" form:"wifi_ssid"`
-	WiFiSSIDCamel    string `json:"wifiSSID" form:"wifiSSID"`
-	WiFiPassword     string `json:"wifi_password" form:"wifi_password"`
+	WiFiSSID          string `json:"wifi_ssid" form:"wifi_ssid"`
+	WiFiSSIDCamel     string `json:"wifiSSID" form:"wifiSSID"`
+	WiFiPassword      string `json:"wifi_password" form:"wifi_password"`
 	WiFiPasswordCamel string `json:"wifiPassword" form:"wifiPassword"`
-	Passphrase       string `json:"passphrase" form:"passphrase"`
-	WiFiSecurity     string `json:"wifi_security" form:"wifi_security"`
+	Passphrase        string `json:"passphrase" form:"passphrase"`
+	WiFiSecurity      string `json:"wifi_security" form:"wifi_security"`
 	WiFiSecurityCamel string `json:"wifiSecurity" form:"wifiSecurity"`
 }
 

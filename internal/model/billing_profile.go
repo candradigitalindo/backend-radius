@@ -4,10 +4,10 @@ import "time"
 
 // BillingProfile adalah template konfigurasi billing yang bisa dipilih saat create customer.
 type BillingProfile struct {
-	ID          string    `json:"id"`
-	TenantID    string    `json:"tenant_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	ID          string `json:"id"`
+	TenantID    string `json:"tenant_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 
 	// BillingModel: "cycle" | "fixed"
 	//   cycle → InvoiceDay & DueDay tetap setiap bulan (misal generate tgl 24, JT tgl 1)

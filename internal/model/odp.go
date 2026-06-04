@@ -24,9 +24,9 @@ type ODP struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 
 	// Computed / joined
-	PONPortSFPRxPower *float64 `json:"pon_port_sfp_rx_power,omitempty"`
-	PONPortSFPTxPower *float64 `json:"pon_port_sfp_tx_power"`
-	PONPortNumber     *int     `json:"pon_port_number,omitempty"`
+	PONPortSFPRxPower   *float64 `json:"pon_port_sfp_rx_power,omitempty"`
+	PONPortSFPTxPower   *float64 `json:"pon_port_sfp_tx_power"`
+	PONPortNumber       *int     `json:"pon_port_number,omitempty"`
 	SignalAttenuationDB *float64 `json:"signal_attenuation_db,omitempty"`
 
 	Ports []ODPPort `json:"ports,omitempty"`

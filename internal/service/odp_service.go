@@ -240,7 +240,7 @@ func (s *ODPService) computePowerLevel(ctx context.Context, odp *model.ODP) {
 
 		// Remaining power for next ODP: pass-through fraction
 		if ratio < 100 {
-			passDB := 10 * math.Log10((100 - ratio) / 100.0)
+			passDB := 10 * math.Log10((100-ratio)/100.0)
 			remainingPowerDBm = afterCable + passDB
 		} else {
 			// All power consumed, nothing left

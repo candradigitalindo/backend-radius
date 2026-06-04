@@ -17,24 +17,25 @@ import (
 )
 
 type Handlers struct {
-	DB               *pgxpool.Pool
-	InvoiceService   *service.InvoiceService
-	CustomerService  *service.CustomerService
-	ReminderService  *service.ReminderService
-	TenantRepo       repository.TenantRepository
-	InvoiceRepo      repository.InvoiceRepository
-	ReminderRepo     repository.ReminderRepository
-	RouterRepo       repository.RouterRepository
-	SessionRepo      repository.SessionRepository
-	IPAMRepo         repository.IPAMRepository
-	SettingRepo      repository.SettingRepository
-	RouterService    *service.RouterService
-	SNMPService      *service.SNMPService
-	RewardService    *service.RewardService
-	WAClient         *whatsapp.Client
-	GenieACSService  *service.GenieACSService
-	ONTRepo          repository.ONTRepository
-	SubscriptionRepo repository.SubscriptionRepository
+	DB                  *pgxpool.Pool
+	InvoiceService      *service.InvoiceService
+	CustomerService     *service.CustomerService
+	ReminderService     *service.ReminderService
+	TenantRepo          repository.TenantRepository
+	InvoiceRepo         repository.InvoiceRepository
+	ReminderRepo        repository.ReminderRepository
+	RouterRepo          repository.RouterRepository
+	SessionRepo         repository.SessionRepository
+	IPAMRepo            repository.IPAMRepository
+	SettingRepo         repository.SettingRepository
+	RouterService       *service.RouterService
+	SNMPService         *service.SNMPService
+	RewardService       *service.RewardService
+	WAClient            *whatsapp.Client
+	GenieACSService     *service.GenieACSService
+	ONTRepo             repository.ONTRepository
+	SubscriptionRepo    repository.SubscriptionRepository
+	NotificationService *service.NotificationService
 }
 
 // saTenantID returns the superadmin's tenant ID by looking up slug="superadmin".
@@ -131,6 +132,7 @@ func (h *Handlers) HandleAutoIsolir(ctx context.Context, t *asynq.Task) error {
 		isolated++
 		if inv.Customer != nil {
 			isolatedCustomers = append(isolatedCustomers, isolatedCustomerInfo{
+				CustomerID:    inv.CustomerID,
 				Name:          inv.Customer.Name,
 				Phone:         inv.Customer.Phone,
 				CustomerCode:  inv.Customer.CustomerCode,
@@ -141,6 +143,11 @@ func (h *Handlers) HandleAutoIsolir(ctx context.Context, t *asynq.Task) error {
 				PeriodYear:    inv.PeriodYear,
 			})
 		}
+	}
+
+	// Web-push + in-app isolir notification (async, independent of WhatsApp)
+	if h.NotificationService != nil && len(isolatedCustomers) > 0 {
+		go h.pushIsolirNotifications(p.TenantID, isolatedCustomers)
 	}
 
 	// Send isolir WA notification (async)
@@ -235,6 +242,7 @@ func greetingByTimeWorker(loc *time.Location) string {
 }
 
 type isolatedCustomerInfo struct {
+	CustomerID    string
 	Name          string
 	Phone         string
 	CustomerCode  string
@@ -243,6 +251,21 @@ type isolatedCustomerInfo struct {
 	DueDate       time.Time
 	PeriodMonth   int
 	PeriodYear    int
+}
+
+// pushIsolirNotifications sends web-push + in-app notifications for isolated
+// customers. Independent of WhatsApp so it fires even when WA isn't configured.
+func (h *Handlers) pushIsolirNotifications(tenantID string, customers []isolatedCustomerInfo) {
+	ctx := context.Background()
+	for _, c := range customers {
+		if c.CustomerID == "" {
+			continue
+		}
+		body := fmt.Sprintf("Layanan internet Anda diisolir karena tagihan %s sebesar Rp%s belum dibayar. Silakan lakukan pembayaran untuk mengaktifkan kembali.",
+			c.InvoiceNumber, formatAmountDot(c.TotalAmount))
+		data := fmt.Sprintf(`{"type":"isolir","invoice":"%s"}`, c.InvoiceNumber)
+		_ = h.NotificationService.PushAndStore(ctx, tenantID, c.CustomerID, "Layanan Diisolir", body, data)
+	}
 }
 
 func (h *Handlers) sendIsolirNotifications(tenantID string, customers []isolatedCustomerInfo) {

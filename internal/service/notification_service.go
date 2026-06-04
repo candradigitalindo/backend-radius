@@ -1,14 +1,15 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
-	"time"
+
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/messaging"
+	"google.golang.org/api/option"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
@@ -21,19 +22,51 @@ type NotificationService struct {
 	notifRepo    repository.NotificationRepository
 	customerRepo repository.CustomerRepository
 	waClient     *whatsapp.Client
-	fcmKey       string
+	fcmClient    *messaging.Client
 	fcmEnabled   bool
-	httpClient   *http.Client
 }
 
-func NewNotificationService(notifRepo repository.NotificationRepository, customerRepo repository.CustomerRepository, fcmKey string, fcmEnabled bool) *NotificationService {
-	return &NotificationService{
+// NewNotificationService wires the notification service. When fcmEnabled is true
+// and a valid service-account credentials file is provided, it initializes the
+// Firebase Cloud Messaging HTTP v1 client. The legacy FCM server-key API was shut
+// down by Google in June 2024, so v1 (OAuth2 service account) is the only path.
+// If initialization fails, FCM is disabled (logged) and the service still works
+// for in-app storage + WhatsApp delivery.
+func NewNotificationService(notifRepo repository.NotificationRepository, customerRepo repository.CustomerRepository, fcmProjectID, fcmCredentialsFile string, fcmEnabled bool) *NotificationService {
+	s := &NotificationService{
 		notifRepo:    notifRepo,
 		customerRepo: customerRepo,
-		fcmKey:       fcmKey,
-		fcmEnabled:   fcmEnabled,
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
 	}
+
+	if fcmEnabled {
+		client, err := initFCMClient(fcmProjectID, fcmCredentialsFile)
+		if err != nil {
+			log.Printf("[notification] FCM dinonaktifkan: gagal inisialisasi client: %v", err)
+		} else {
+			s.fcmClient = client
+			s.fcmEnabled = true
+			log.Printf("[notification] FCM HTTP v1 aktif (project: %s)", fcmProjectID)
+		}
+	}
+
+	return s
+}
+
+// initFCMClient builds a Firebase Cloud Messaging client from a service-account JSON file.
+func initFCMClient(projectID, credentialsFile string) (*messaging.Client, error) {
+	if credentialsFile == "" {
+		return nil, fmt.Errorf("FCM_CREDENTIALS_FILE kosong")
+	}
+	cfg := &firebase.Config{ProjectID: projectID}
+	app, err := firebase.NewApp(context.Background(), cfg, option.WithCredentialsFile(credentialsFile))
+	if err != nil {
+		return nil, fmt.Errorf("init firebase app: %w", err)
+	}
+	client, err := app.Messaging(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("init messaging client: %w", err)
+	}
+	return client, nil
 }
 
 func (s *NotificationService) WithWAClient(waClient *whatsapp.Client) *NotificationService {
@@ -76,6 +109,43 @@ func (s *NotificationService) UnreadCount(ctx context.Context, tenantID, custome
 	return s.notifRepo.UnreadCount(ctx, tenantID, customerID)
 }
 
+// PushAndStore stores an in-app notification and sends a web-push (FCM) to the
+// customer's registered devices. It deliberately does NOT send WhatsApp — use it
+// for events that already deliver their own WA message (invoice created, payment,
+// isolir) so the customer doesn't get a duplicate WA. The in-app row is stored
+// even when FCM is disabled, so it still builds notification history.
+func (s *NotificationService) PushAndStore(ctx context.Context, tenantID, customerID, title, body, data string) error {
+	if customerID == "" {
+		return nil
+	}
+	if data != "" && !json.Valid([]byte(data)) {
+		data = ""
+	}
+
+	notif := &model.Notification{
+		TenantID:   tenantID,
+		CustomerID: customerID,
+		Title:      title,
+		Body:       body,
+		Data:       data,
+	}
+	if err := s.notifRepo.Create(ctx, notif); err != nil {
+		return err
+	}
+
+	if s.fcmEnabled {
+		devices, err := s.notifRepo.GetDevicesByCustomer(ctx, tenantID, customerID)
+		if err != nil {
+			log.Printf("[notification] gagal ambil devices FCM untuk customer %s: %v", customerID, err)
+		} else {
+			for _, d := range devices {
+				s.sendFCM(ctx, d.TenantID, d.CustomerID, d.FCMToken, title, body, data)
+			}
+		}
+	}
+	return nil
+}
+
 // SendToCustomer sends a push notification to a specific customer and stores it.
 func (s *NotificationService) SendToCustomer(ctx context.Context, tenantID, customerID, title, body, data, fileURL string) error {
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, customerID)
@@ -102,13 +172,13 @@ func (s *NotificationService) SendToCustomer(ctx context.Context, tenantID, cust
 	}
 
 	// Send push via FCM (opsional)
-	if s.fcmEnabled && s.fcmKey != "" {
+	if s.fcmEnabled {
 		devices, err := s.notifRepo.GetDevicesByCustomer(ctx, tenantID, customerID)
 		if err != nil {
 			log.Printf("[notification] gagal ambil devices FCM untuk customer %s: %v", customerID, err)
 		} else {
 			for _, d := range devices {
-				_ = s.sendFCM(d.FCMToken, title, body, data)
+				s.sendFCM(ctx, d.TenantID, d.CustomerID, d.FCMToken, title, body, data)
 			}
 		}
 	}
@@ -137,7 +207,7 @@ func (s *NotificationService) BroadcastToTenant(ctx context.Context, tenantID, t
 
 	sent := 0
 	for _, d := range devices {
-		if err := s.sendFCM(d.FCMToken, title, body, data); err == nil {
+		if s.sendFCM(ctx, d.TenantID, d.CustomerID, d.FCMToken, title, body, data) {
 			sent++
 		}
 	}
@@ -201,50 +271,42 @@ func (s *NotificationService) BroadcastToTenant(ctx context.Context, tenantID, t
 	return sent, nil
 }
 
-type fcmMessage struct {
-	To           string            `json:"to"`
-	Notification fcmNotification   `json:"notification"`
-	Data         map[string]string `json:"data,omitempty"`
-}
+// sendFCM delivers a single push via FCM HTTP v1. Returns true on success.
+// On an unregistered/invalid token it deactivates the device so stale tokens
+// stop being retried on every send.
+func (s *NotificationService) sendFCM(ctx context.Context, tenantID, customerID, token, title, body, data string) bool {
+	if s.fcmClient == nil {
+		return false
+	}
 
-type fcmNotification struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
-}
-
-func (s *NotificationService) sendFCM(token, title, body, data string) error {
-	msg := fcmMessage{
-		To: token,
-		Notification: fcmNotification{
+	msg := &messaging.Message{
+		Token: token,
+		Notification: &messaging.Notification{
 			Title: title,
 			Body:  body,
 		},
+		Webpush: &messaging.WebpushConfig{
+			Notification: &messaging.WebpushNotification{
+				Title: title,
+				Body:  body,
+				Icon:  "/favicon.svg",
+			},
+		},
 	}
-
 	if data != "" {
 		msg.Data = map[string]string{"payload": data}
 	}
 
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
+	if _, err := s.fcmClient.Send(ctx, msg); err != nil {
+		if messaging.IsUnregistered(err) {
+			// Token no longer valid — deactivate so we stop retrying it.
+			if uerr := s.notifRepo.UnregisterDevice(ctx, tenantID, customerID, token); uerr != nil {
+				log.Printf("[notification] gagal menonaktifkan token mati: %v", uerr)
+			}
+		} else {
+			log.Printf("[notification] FCM send gagal (customer %s): %v", customerID, err)
+		}
+		return false
 	}
-
-	req, err := http.NewRequest("POST", "https://fcm.googleapis.com/fcm/send", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("key=%s", s.fcmKey))
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("FCM mengembalikan status %d", resp.StatusCode)
-	}
-	return nil
+	return true
 }

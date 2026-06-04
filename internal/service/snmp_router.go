@@ -101,8 +101,8 @@ func (s *SNMPService) GetRouterInterfaceBandwidth(ctx context.Context, ip string
 		s2, ok2 := sample2[name]
 		s1, ok1 := sample1[name]
 		if ok1 && ok2 {
-			inBps := int64(s2.In - s1.In) * 8
-			outBps := int64(s2.Out - s1.Out) * 8
+			inBps := int64(s2.In-s1.In) * 8
+			outBps := int64(s2.Out-s1.Out) * 8
 			results = append(results, InterfaceBandwidth{
 				Name:   name,
 				InBps:  inBps,
