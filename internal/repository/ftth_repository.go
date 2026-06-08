@@ -21,13 +21,17 @@ type FTTHStats struct {
 }
 
 type FTTHMapItem struct {
-	ID        string   `json:"id"`
-	Type      string   `json:"type"`
-	Name      string   `json:"name"`
-	Latitude  *float64 `json:"latitude,omitempty"`
-	Longitude *float64 `json:"longitude,omitempty"`
-	Status    string   `json:"status"`
-	ParentID  *string  `json:"parent_id,omitempty"`
+	ID               string   `json:"id"`
+	Type             string   `json:"type"`
+	Name             string   `json:"name"`
+	Latitude         *float64 `json:"latitude,omitempty"`
+	Longitude        *float64 `json:"longitude,omitempty"`
+	Status           string   `json:"status"`
+	ParentID         *string  `json:"parent_id,omitempty"`
+	TotalPorts       int      `json:"total_ports,omitempty"`
+	UsedPorts        int      `json:"used_ports,omitempty"`
+	ConnectionStatus string   `json:"connection_status,omitempty"`
+	PPPoEUsername    string   `json:"pppoe_username,omitempty"`
 }
 
 type FTTHRepository interface {
@@ -184,18 +188,49 @@ func (r *ftthRepository) GetMapItems(ctx context.Context, tenantID string) ([]FT
 	}
 	rows.Close()
 
-	// ODPs
-	rows, err = r.db.Query(ctx,
-		`SELECT id, name, latitude, longitude, COALESCE(splitter_id, olt_id) FROM odps WHERE tenant_id = $1`, tenantID,
-	)
+	// ODPs with used port counts
+	rows, err = r.db.Query(ctx, `
+		SELECT o.id, o.name, o.latitude, o.longitude,
+		       COALESCE(o.splitter_id::text, o.olt_id::text),
+		       o.status, o.total_ports,
+		       COUNT(dp.id) FILTER (WHERE dp.status = 'used')
+		FROM odps o
+		LEFT JOIN odp_ports dp ON dp.odp_id = o.id
+		WHERE o.tenant_id = $1
+		GROUP BY o.id
+	`, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var item FTTHMapItem
 		item.Type = "odp"
-		item.Status = "active"
-		if err := rows.Scan(&item.ID, &item.Name, &item.Latitude, &item.Longitude, &item.ParentID); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Latitude, &item.Longitude, &item.ParentID, &item.Status, &item.TotalPorts, &item.UsedPorts); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+
+	// Customers with coordinates (modem locations)
+	rows, err = r.db.Query(ctx, `
+		SELECT c.id, c.name, c.latitude, c.longitude,
+		       c.status, c.connection_status, c.pppoe_username,
+		       dp.odp_id
+		FROM customers c
+		LEFT JOIN odp_ports dp ON dp.id = c.odp_port_id
+		WHERE c.tenant_id = $1
+		  AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+		  AND c.latitude != 0 AND c.longitude != 0
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var item FTTHMapItem
+		item.Type = "customer"
+		if err := rows.Scan(&item.ID, &item.Name, &item.Latitude, &item.Longitude, &item.Status, &item.ConnectionStatus, &item.PPPoEUsername, &item.ParentID); err != nil {
 			rows.Close()
 			return nil, err
 		}
