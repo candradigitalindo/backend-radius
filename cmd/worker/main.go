@@ -66,13 +66,17 @@ func main() {
 	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).
 		WithTenantRepo(tenantRepo).
 		WithWAClient(waClient).
+		WithBaseURL(cfg.App.URL).
 		WithReminderRepo(reminderRepo).
 		WithSettingRepo(settingRepo).
 		WithReward(rewardService).
 		WithBillingProfileRepo(billingProfileRepo).
 		WithNotificationService(notificationService)
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
-	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo)
+	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).
+		WithSettingRepo(settingRepo).
+		WithPaymentRepo(paymentRepo).
+		WithBaseURL(cfg.App.URL)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, nil)
 	snmpService := service.NewSNMPService(nil, nil)
 

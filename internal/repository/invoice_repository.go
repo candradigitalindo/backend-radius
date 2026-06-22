@@ -38,6 +38,10 @@ type InvoiceRepository interface {
 	HasUnpaidInvoice(ctx context.Context, tenantID, customerID string) (bool, error)
 	FindLastPaidInvoice(ctx context.Context, tenantID, customerID string) (*model.Invoice, error)
 	CountPaidInvoices(ctx context.Context, tenantID, customerID string) (int, error)
+	// FindOldestUnpaidByCustomer returns the customer's oldest unpaid/overdue invoice.
+	FindOldestUnpaidByCustomer(ctx context.Context, tenantID, customerID string) (*model.Invoice, error)
+	// ApplyCredit reduces an invoice total by amount (recorded as extra discount).
+	ApplyCredit(ctx context.Context, tenantID, invoiceID string, amount int64) error
 	NextDailySeq(ctx context.Context, tenantID, datePrefix string) (int, error)
 }
 
@@ -495,6 +499,36 @@ func (r *invoiceRepository) HasUnpaidInvoice(ctx context.Context, tenantID, cust
 		SELECT EXISTS(SELECT 1 FROM invoices WHERE tenant_id = $1 AND customer_id = $2 AND status = 'unpaid')
 	`, tenantID, customerID).Scan(&exists)
 	return exists, err
+}
+
+func (r *invoiceRepository) FindOldestUnpaidByCustomer(ctx context.Context, tenantID, customerID string) (*model.Invoice, error) {
+	var inv model.Invoice
+	err := r.db.QueryRow(ctx, `
+		SELECT id, tenant_id, customer_id, invoice_number, total_amount, status
+		FROM invoices
+		WHERE tenant_id = $1 AND customer_id = $2 AND status IN ('unpaid','overdue')
+		ORDER BY due_date ASC, created_at ASC
+		LIMIT 1
+	`, tenantID, customerID).Scan(&inv.ID, &inv.TenantID, &inv.CustomerID, &inv.InvoiceNumber, &inv.TotalAmount, &inv.Status)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &inv, nil
+}
+
+// ApplyCredit reduces an unpaid invoice's total by amount, recorded as added discount.
+func (r *invoiceRepository) ApplyCredit(ctx context.Context, tenantID, invoiceID string, amount int64) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE invoices
+		SET discount = discount + $1,
+		    total_amount = GREATEST(total_amount - $1, 0),
+		    updated_at = NOW()
+		WHERE id = $2 AND tenant_id = $3 AND status IN ('unpaid','overdue')
+	`, amount, invoiceID, tenantID)
+	return err
 }
 
 func (r *invoiceRepository) FindLastPaidInvoice(ctx context.Context, tenantID, customerID string) (*model.Invoice, error) {

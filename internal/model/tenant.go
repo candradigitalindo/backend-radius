@@ -38,6 +38,14 @@ type Tenant struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
+// IsOnlinePaymentActive reports whether customer-facing online payment is live for
+// this tenant. Requires a gateway API key AND production mode — a sandbox gateway
+// cannot accept real customer payments, so it is treated as inactive. This is the
+// single source of truth used by the portal, public pay page, and WhatsApp reminders.
+func (t *Tenant) IsOnlinePaymentActive() bool {
+	return t.PGAPIKey != "" && !t.PGSandbox
+}
+
 // TenantWithSecrets is used only by settings endpoints that need to expose integration keys.
 type TenantWithSecrets struct {
 	Tenant

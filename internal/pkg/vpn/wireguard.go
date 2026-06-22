@@ -351,6 +351,19 @@ func (m *Manager) IsAvailable() bool {
 	return true
 }
 
+// StaticConfig returns the server's configured VPN parameters (subnet, server IP,
+// listen port, public IP) without requiring the WireGuard interface to be up.
+// PublicKey is intentionally omitted — it can only be read live via GetServerInfo.
+func (m *Manager) StaticConfig() ServerInfo {
+	return ServerInfo{
+		ListenPort: m.listenPort,
+		ServerIP:   m.serverIP,
+		Subnet:     m.subnet,
+		Interface:  m.iface,
+		PublicIP:   m.publicIP,
+	}
+}
+
 // GetServerInfo returns the WireGuard server's public key and connection details.
 func (m *Manager) GetServerInfo() (*ServerInfo, error) {
 	client, err := wgctrl.New()

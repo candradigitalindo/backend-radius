@@ -576,14 +576,14 @@ func (s *SubscriptionService) createSubXenditPayment(ctx context.Context, order 
 }
 
 // ProcessSubTripayWebhook handles Tripay callback for subscription orders.
-func (s *SubscriptionService) ProcessSubTripayWebhook(ctx context.Context, payload payment.TripayCallbackPayload) error {
+func (s *SubscriptionService) ProcessSubTripayWebhook(ctx context.Context, rawBody []byte, signature string, payload payment.TripayCallbackPayload) error {
 	pgCfg := s.loadSAPGConfig(ctx)
 	if pgCfg == nil || pgCfg.SecretKey == "" {
 		return fmt.Errorf("payment gateway superadmin belum dikonfigurasi")
 	}
 
 	tripayClient := payment.NewTripayClient(pgCfg.APIKey, pgCfg.SecretKey, pgCfg.MerchantID, pgCfg.Sandbox)
-	if !tripayClient.VerifyWebhookSignature(payload) {
+	if !tripayClient.VerifyCallbackSignature(rawBody, signature) {
 		return fmt.Errorf("signature webhook Tripay tidak valid")
 	}
 

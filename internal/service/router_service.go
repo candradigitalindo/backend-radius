@@ -21,6 +21,14 @@ var (
 	ErrInvalidHeartbeat = errors.New("Token heartbeat tidak valid")
 )
 
+const (
+	// Convention defaults surfaced to the MikroTik config UI so the frontend
+	// never hardcodes them. CoAPort default applies only when a router has none.
+	defaultCoAPort           = 3799
+	defaultWGRouterPort      = "13231"   // router-side WireGuard listen port
+	defaultHeartbeatInterval = "00:05:00" // RouterOS scheduler interval (hh:mm:ss)
+)
+
 type RouterService struct {
 	routerRepo   repository.RouterRepository
 	sessionRepo  repository.SessionRepository
@@ -81,13 +89,30 @@ func (s *RouterService) GetVPNStatus(vpnIP string) *vpn.PeerStatus {
 type CreateRouterInput struct {
 	TenantID      string
 	Name          string
+	RouterType    string
 	SNMPCommunity string
 }
 
 type UpdateRouterInput struct {
 	Name          string
+	RouterType    string
 	SNMPCommunity string
 	IsActive      bool
+}
+
+// validRouterTypes are the router brands with a tailored configuration guide.
+var validRouterTypes = map[string]bool{
+	"mikrotik": true, "cisco": true, "huawei": true,
+	"juniper": true, "vyos": true, "ruijie": true,
+}
+
+// normalizeRouterType returns a supported router type, defaulting to mikrotik.
+func normalizeRouterType(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	if validRouterTypes[t] {
+		return t
+	}
+	return "mikrotik"
 }
 
 func (s *RouterService) Create(ctx context.Context, input CreateRouterInput) (*model.Router, error) {
@@ -119,9 +144,10 @@ func (s *RouterService) Create(ctx context.Context, input CreateRouterInput) (*m
 	router := &model.Router{
 		TenantID:       input.TenantID,
 		Name:           strings.ToUpper(input.Name),
+		RouterType:     normalizeRouterType(input.RouterType),
 		VPNIP:          vpnIP,
 		RADIUSSecret:   radiusSecret,
-		CoAPort:        3799,
+		CoAPort:        defaultCoAPort,
 		HeartbeatToken: token,
 		SNMPCommunity:  community,
 		IsActive:       true,
@@ -157,6 +183,9 @@ func (s *RouterService) Update(ctx context.Context, tenantID, routerID string, i
 	router.Name = strings.ToUpper(input.Name)
 	if input.SNMPCommunity != "" {
 		router.SNMPCommunity = input.SNMPCommunity
+	}
+	if input.RouterType != "" {
+		router.RouterType = normalizeRouterType(input.RouterType)
 	}
 	router.IsActive = input.IsActive
 
@@ -432,20 +461,22 @@ func stringVal(s *string) string {
 }
 
 type MikroTikConfig struct {
-	RouterName      string `json:"router_name"`
-	VPNIP           string `json:"vpn_ip"`
-	RADIUSSecret    string `json:"radius_secret"`
-	HeartbeatToken  string `json:"heartbeat_token"`
-	HeartbeatURL    string `json:"heartbeat_url"`
-	CoAPort         int    `json:"coa_port"`
-	ServerPublicKey string `json:"server_public_key"`
-	ServerEndpoint  string `json:"server_endpoint"`
-	ServerVPNIP     string `json:"server_vpn_ip"`
-	VPNSubnet       string `json:"vpn_subnet"`
-	VPNListenPort   string `json:"vpn_listen_port"`
-	RADIUSAuthPort  string `json:"radius_auth_port"`
-	RADIUSAcctPort  string `json:"radius_acct_port"`
-	Script          string `json:"script"`
+	RouterName        string `json:"router_name"`
+	VPNIP             string `json:"vpn_ip"`
+	RADIUSSecret      string `json:"radius_secret"`
+	HeartbeatToken    string `json:"heartbeat_token"`
+	HeartbeatURL      string `json:"heartbeat_url"`
+	HeartbeatInterval string `json:"heartbeat_interval"`
+	CoAPort           int    `json:"coa_port"`
+	ServerPublicKey   string `json:"server_public_key"`
+	ServerEndpoint    string `json:"server_endpoint"`
+	ServerVPNIP       string `json:"server_vpn_ip"`
+	VPNSubnet         string `json:"vpn_subnet"`
+	VPNListenPort     string `json:"vpn_listen_port"`
+	WGRouterPort      string `json:"wg_router_port"`
+	RADIUSAuthPort    string `json:"radius_auth_port"`
+	RADIUSAcctPort    string `json:"radius_acct_port"`
+	Script            string `json:"script"`
 }
 
 func (s *RouterService) GetMikroTikConfig(ctx context.Context, tenantID, routerID string) (*MikroTikConfig, error) {
@@ -458,27 +489,39 @@ func (s *RouterService) GetMikroTikConfig(ctx context.Context, tenantID, routerI
 	}
 
 	config := &MikroTikConfig{
-		RouterName:     router.Name,
-		VPNIP:          router.VPNIP,
-		RADIUSSecret:   router.RADIUSSecret,
-		HeartbeatToken: router.HeartbeatToken,
-		CoAPort:        router.CoAPort,
-		RADIUSAuthPort: "1812",
-		RADIUSAcctPort: "1813",
+		RouterName:        router.Name,
+		VPNIP:             router.VPNIP,
+		RADIUSSecret:      router.RADIUSSecret,
+		HeartbeatToken:    router.HeartbeatToken,
+		HeartbeatInterval: defaultHeartbeatInterval,
+		CoAPort:           router.CoAPort,
+		WGRouterPort:      defaultWGRouterPort,
+		RADIUSAuthPort:    "1812",
+		RADIUSAcctPort:    "1813",
+	}
+	if config.CoAPort == 0 {
+		config.CoAPort = defaultCoAPort
 	}
 
 	if s.appURL != "" {
 		config.HeartbeatURL = s.appURL + "/api/v1/routers/heartbeat"
 	}
 
-	if s.vpnManager != nil && s.vpnManager.IsAvailable() {
-		serverInfo, err := s.vpnManager.GetServerInfo()
-		if err == nil {
-			config.ServerPublicKey = serverInfo.PublicKey
-			config.ServerEndpoint = serverInfo.PublicIP
-			config.ServerVPNIP = serverInfo.ServerIP
-			config.VPNSubnet = serverInfo.Subnet
-			config.VPNListenPort = serverInfo.ListenPort
+	// Static VPN parameters (subnet, server VPN IP, listen port, public IP) are
+	// configuration values — populate them regardless of whether the WireGuard
+	// interface is currently up, so the UI never falls back to placeholders.
+	if s.vpnManager != nil {
+		static := s.vpnManager.StaticConfig()
+		config.ServerEndpoint = static.PublicIP
+		config.ServerVPNIP = static.ServerIP
+		config.VPNSubnet = static.Subnet
+		config.VPNListenPort = static.ListenPort
+
+		// The server's WireGuard public key can only be read from the live interface.
+		if s.vpnManager.IsAvailable() {
+			if serverInfo, err := s.vpnManager.GetServerInfo(); err == nil {
+				config.ServerPublicKey = serverInfo.PublicKey
+			}
 		}
 	}
 
@@ -492,7 +535,7 @@ func (s *RouterService) buildMikroTikScript(cfg *MikroTikConfig) string {
 	b.WriteString(fmt.Sprintf("# Router: %s\n", cfg.RouterName))
 	b.WriteString("# Generated by Radius Server\n\n")
 	b.WriteString("# --- 1. WireGuard VPN ---\n")
-	b.WriteString("/interface wireguard add name=wg0 listen-port=13231\n")
+	b.WriteString(fmt.Sprintf("/interface wireguard add name=wg0 listen-port=%s\n", cfg.WGRouterPort))
 	b.WriteString(fmt.Sprintf("/interface wireguard peers add interface=wg0 public-key=\"%s\" endpoint-address=%s endpoint-port=%s allowed-address=%s persistent-keepalive=25 comment=\"VPN Server\"\n",
 		cfg.ServerPublicKey, cfg.ServerEndpoint, cfg.VPNListenPort, cfg.VPNSubnet))
 	b.WriteString(fmt.Sprintf("/ip address add address=%s/24 interface=wg0 network=%s\n\n",
@@ -500,12 +543,12 @@ func (s *RouterService) buildMikroTikScript(cfg *MikroTikConfig) string {
 	b.WriteString("# --- 2. RADIUS ---\n")
 	b.WriteString(fmt.Sprintf("/radius add service=hotspot,login,ppp address=%s secret=\"%s\" authentication-port=%s accounting-port=%s\n",
 		cfg.ServerVPNIP, cfg.RADIUSSecret, cfg.RADIUSAuthPort, cfg.RADIUSAcctPort))
-	b.WriteString("/radius incoming set accept=yes port=3799\n\n")
+	b.WriteString(fmt.Sprintf("/radius incoming set accept=yes port=%d\n\n", cfg.CoAPort))
 	b.WriteString("# --- 3. Heartbeat Monitoring ---\n")
 	b.WriteString(fmt.Sprintf(`:global heartbeatToken "%s"
 :global heartbeatURL "%s"
 
-/system scheduler add name=radius-heartbeat interval=5m on-event={
+/system scheduler add name=radius-heartbeat interval=%s on-event={
   :local cpuLoad [/system resource get cpu-load]
   :local freeMem [/system resource get free-memory]
   :local totalMem [/system resource get total-memory]
@@ -516,7 +559,7 @@ func (s *RouterService) buildMikroTikScript(cfg *MikroTikConfig) string {
   :local payload "{\"token\":\"$heartbeatToken\",\"identity\":\"$identity\",\"cpu_load\":$cpuLoad,\"free_memory\":$freeMem,\"total_memory\":$totalMem,\"uptime\":\"$uptime\",\"board_name\":\"$boardName\",\"router_os_ver\":\"$osVer\"}"
   /tool fetch url=$heartbeatURL http-method=post http-header-field="Content-Type: application/json" http-data=$payload output=none
 } comment="Radius Server Heartbeat"
-`, cfg.HeartbeatToken, cfg.HeartbeatURL))
+`, cfg.HeartbeatToken, cfg.HeartbeatURL, cfg.HeartbeatInterval))
 	return b.String()
 }
 

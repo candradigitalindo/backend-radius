@@ -2,12 +2,17 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 )
+
+// ErrNoUnpaidInvoice is returned when a reward credit cannot be applied because the
+// customer has no outstanding invoice to discount.
+var ErrNoUnpaidInvoice = errors.New("Tidak ada tagihan belum dibayar untuk menerapkan reward")
 
 type RewardService struct {
 	rewardRepo  repository.RewardRepository
@@ -85,7 +90,41 @@ func (s *RewardService) ListClaims(ctx context.Context, tenantID string, filter 
 	return s.rewardRepo.ListClaims(ctx, tenantID, filter)
 }
 
+// ApplyClaim redeems a pending reward claim by crediting its amount as a discount
+// on the customer's oldest unpaid invoice, then marks the claim applied.
 func (s *RewardService) ApplyClaim(ctx context.Context, tenantID, claimID string) error {
+	claim, err := s.rewardRepo.GetClaim(ctx, tenantID, claimID)
+	if err != nil {
+		return err
+	}
+	if claim == nil {
+		return errors.New("Klaim tidak ditemukan")
+	}
+	if claim.Status != "pending" {
+		return errors.New("Klaim sudah diproses")
+	}
+
+	// Apply the reward as a credit/discount on the customer's oldest unpaid invoice.
+	if s.invoiceRepo != nil && claim.Amount > 0 {
+		inv, err := s.invoiceRepo.FindOldestUnpaidByCustomer(ctx, tenantID, claim.CustomerID)
+		if err != nil {
+			return err
+		}
+		if inv == nil {
+			return ErrNoUnpaidInvoice
+		}
+		credit := claim.Amount
+		if credit > inv.TotalAmount {
+			credit = inv.TotalAmount
+		}
+		if credit > 0 {
+			if err := s.invoiceRepo.ApplyCredit(ctx, tenantID, inv.ID, credit); err != nil {
+				return err
+			}
+			log.Printf("[reward] applied credit %d to invoice %s (customer %s, claim %s)", credit, inv.InvoiceNumber, claim.CustomerID, claimID)
+		}
+	}
+
 	return s.rewardRepo.ApplyClaim(ctx, tenantID, claimID)
 }
 

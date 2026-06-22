@@ -52,18 +52,20 @@ type createCustomerRequest struct {
 	ONTVendor    *string `json:"ont_vendor"`
 	ONTModel     *string `json:"ont_model"`
 	// Kode referral yang digunakan saat mendaftar (opsional)
-	ReferralCodeUsed string `json:"referral_code_used"`
+	ReferralCodeUsed string  `json:"referral_code_used"`
+	ResellerID       *string `json:"reseller_id"`
 }
 
 type updateCustomerProfileRequest struct {
-	Name      string   `json:"name"`
-	NIK       string   `json:"nik"`
-	Phone     string   `json:"phone"`
-	Email     string   `json:"email"`
-	Address   string   `json:"address"`
-	Latitude  *float64 `json:"latitude"`
-	Longitude *float64 `json:"longitude"`
-	Notes     string   `json:"notes"`
+	Name       string   `json:"name"`
+	NIK        string   `json:"nik"`
+	Phone      string   `json:"phone"`
+	Email      string   `json:"email"`
+	Address    string   `json:"address"`
+	Latitude   *float64 `json:"latitude"`
+	Longitude  *float64 `json:"longitude"`
+	Notes      string   `json:"notes"`
+	ResellerID *string  `json:"reseller_id"`
 }
 
 type updateCustomerAccessRequest struct {
@@ -135,6 +137,7 @@ func (h *CustomerHandler) Create(c *fiber.Ctx) error {
 		ONTVendor:        req.ONTVendor,
 		ONTModel:         req.ONTModel,
 		ReferralCodeUsed: req.ReferralCodeUsed,
+		ResellerID:       req.ResellerID,
 	})
 	if err != nil {
 		return h.handleError(c, err)
@@ -169,14 +172,15 @@ func (h *CustomerHandler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	customer, err := h.customerService.UpdateProfile(c.Context(), tenantID, customerID, service.UpdateCustomerProfileInput{
-		Name:      req.Name,
-		NIK:       req.NIK,
-		Phone:     req.Phone,
-		Email:     req.Email,
-		Address:   req.Address,
-		Latitude:  req.Latitude,
-		Longitude: req.Longitude,
-		Notes:     req.Notes,
+		Name:       req.Name,
+		NIK:        req.NIK,
+		Phone:      req.Phone,
+		Email:      req.Email,
+		Address:    req.Address,
+		Latitude:   req.Latitude,
+		Longitude:  req.Longitude,
+		Notes:      req.Notes,
+		ResellerID: req.ResellerID,
 	})
 	if err != nil {
 		return h.handleError(c, err)

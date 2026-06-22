@@ -105,8 +105,17 @@ services:
     depends_on:
       - app
       - wa
+    networks:
+      - default
+      - web
 
 volumes:
   pgdata:
   redisdata:
   storage:
+
+# 'web' = network bersama reverse-proxy (proxy_nginx). Hanya nginx publik yang join.
+networks:
+  web:
+    name: web
+    external: true

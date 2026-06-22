@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -950,6 +951,9 @@ func (h *PortalHandler) PayInvoiceGateway(c *fiber.Ctx) error {
 		ReturnURL:     req.ReturnURL,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrPaymentGatewayInactive) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Pembayaran online belum aktif untuk tenant ini"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat link pembayaran: " + err.Error()})
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": result})
@@ -964,9 +968,8 @@ func (h *PortalHandler) GetPaymentConfig(c *fiber.Ctx) error {
 	if err != nil || tenant == nil {
 		return c.JSON(fiber.Map{"data": fiber.Map{"available": false, "provider": ""}})
 	}
-	available := tenant.PGAPIKey != "" && !tenant.PGSandbox
 	return c.JSON(fiber.Map{"data": fiber.Map{
-		"available": available,
+		"available": tenant.IsOnlinePaymentActive(),
 		"provider":  tenant.PGProvider,
 		"sandbox":   tenant.PGSandbox,
 	}})

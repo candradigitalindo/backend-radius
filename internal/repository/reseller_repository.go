@@ -25,6 +25,8 @@ type ResellerRepository interface {
 	PayCommission(ctx context.Context, tenantID, commissionID string) error
 	PayAllPending(ctx context.Context, tenantID, resellerID string) (int, error)
 	GetCommissionSummary(ctx context.Context, tenantID, resellerID string) (*CommissionSummary, error)
+	FindResellerByCustomer(ctx context.Context, tenantID, customerID string) (*model.Reseller, error)
+	CommissionExistsForInvoice(ctx context.Context, tenantID, invoiceID string) (bool, error)
 }
 
 type ResellerFilter struct {
@@ -342,6 +344,43 @@ func (r *resellerRepository) GetCommissionSummary(ctx context.Context, tenantID,
 		return nil, err
 	}
 	return &s, nil
+}
+
+// FindResellerByCustomer returns the active reseller assigned to a customer (via
+// customers.reseller_id), or nil if the customer has no reseller.
+func (r *resellerRepository) FindResellerByCustomer(ctx context.Context, tenantID, customerID string) (*model.Reseller, error) {
+	query := `
+		SELECT rs.id, rs.tenant_id, rs.name, rs.email, rs.phone, rs.company_name, rs.address,
+		       rs.commission_rate, rs.balance, rs.status, rs.notes, rs.created_at, rs.updated_at
+		FROM customers c
+		INNER JOIN resellers rs ON rs.id = c.reseller_id AND rs.tenant_id = c.tenant_id
+		WHERE c.id = $1 AND c.tenant_id = $2 AND c.reseller_id IS NOT NULL
+		LIMIT 1
+	`
+	var res model.Reseller
+	err := r.db.QueryRow(ctx, query, customerID, tenantID).Scan(
+		&res.ID, &res.TenantID, &res.Name, &res.Email, &res.Phone,
+		&res.CompanyName, &res.Address, &res.CommissionRate, &res.Balance, &res.Status,
+		&res.Notes, &res.CreatedAt, &res.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &res, nil
+}
+
+// CommissionExistsForInvoice reports whether a commission already exists for an
+// invoice — used to keep auto-commission idempotent across repeated webhooks.
+func (r *resellerRepository) CommissionExistsForInvoice(ctx context.Context, tenantID, invoiceID string) (bool, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM reseller_commissions WHERE tenant_id = $1 AND invoice_id = $2`,
+		tenantID, invoiceID,
+	).Scan(&n)
+	return n > 0, err
 }
 
 func (r *resellerRepository) ListCustomers(ctx context.Context, tenantID, resellerID string) ([]model.Customer, error) {

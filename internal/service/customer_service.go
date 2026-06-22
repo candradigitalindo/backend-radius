@@ -42,6 +42,7 @@ type CustomerService struct {
 	tenantRepo    repository.TenantRepository
 	rewardSvc     *RewardService
 	appURL        string
+	cwmpURL       string // explicit ACS URL (e.g. https://app.dradius.net/cwmp); takes precedence over IP:port
 	cwmpPort      string
 }
 
@@ -87,6 +88,11 @@ func (s *CustomerService) WithCWMPPort(port string) *CustomerService {
 	return s
 }
 
+func (s *CustomerService) WithCWMPURL(url string) *CustomerService {
+	s.cwmpURL = url
+	return s
+}
+
 type CreateCustomerInput struct {
 	TenantID         string
 	Name             string
@@ -113,17 +119,19 @@ type CreateCustomerInput struct {
 	ONTVendor        *string
 	ONTModel         *string
 	ReferralCodeUsed string
+	ResellerID       *string
 }
 
 type UpdateCustomerProfileInput struct {
-	Name      string
-	NIK       string
-	Phone     string
-	Email     string
-	Address   string
-	Latitude  *float64
-	Longitude *float64
-	Notes     string
+	Name       string
+	NIK        string
+	Phone      string
+	Email      string
+	Address    string
+	Latitude   *float64
+	Longitude  *float64
+	Notes      string
+	ResellerID *string
 }
 
 type UpdateCustomerAccessInput struct {
@@ -224,6 +232,7 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 		PackageID:        input.PackageID,
 		RouterID:         input.RouterID,
 		ODPPortID:        input.ODPPortID,
+		ResellerID:       input.ResellerID,
 		JoinDate:         joinDate,
 		BillingDate:      billingDate,
 		BillingType:      input.BillingType,
@@ -354,7 +363,10 @@ func (s *CustomerService) GetByID(ctx context.Context, tenantID, customerID stri
 			customer.ActiveSession = sess
 		}
 	}
-	if s.cwmpPort != "" {
+	if s.cwmpURL != "" {
+		u := s.cwmpURL
+		customer.ACSURL = &u
+	} else if s.cwmpPort != "" {
 		publicIP := netutil.GetPublicIP()
 		if publicIP != "" {
 			acsURL := "http://" + publicIP + ":" + s.cwmpPort
@@ -545,6 +557,14 @@ func (s *CustomerService) UpdateProfile(ctx context.Context, tenantID, customerI
 	}
 	if input.Notes != "" {
 		customer.Notes = input.Notes
+	}
+	// Reseller assignment: "" clears, a value sets, nil leaves unchanged.
+	if input.ResellerID != nil {
+		if *input.ResellerID == "" {
+			customer.ResellerID = nil
+		} else {
+			customer.ResellerID = input.ResellerID
+		}
 	}
 
 	if err := s.customerRepo.Update(ctx, customer); err != nil {

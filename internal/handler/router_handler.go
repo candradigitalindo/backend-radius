@@ -38,11 +38,13 @@ func (h *RouterHandler) routerResponse(router interface{}) fiber.Map {
 
 type createRouterRequest struct {
 	Name          string `json:"name"`
+	RouterType    string `json:"router_type"`
 	SNMPCommunity string `json:"snmp_community"`
 }
 
 type updateRouterRequest struct {
 	Name          string `json:"name"`
+	RouterType    string `json:"router_type"`
 	SNMPCommunity string `json:"snmp_community"`
 	IsActive      bool   `json:"is_active"`
 }
@@ -74,6 +76,7 @@ func (h *RouterHandler) Create(c *fiber.Ctx) error {
 	router, err := h.routerService.Create(c.Context(), service.CreateRouterInput{
 		TenantID:      tenantID,
 		Name:          req.Name,
+		RouterType:    req.RouterType,
 		SNMPCommunity: req.SNMPCommunity,
 	})
 	if err != nil {
@@ -126,6 +129,7 @@ func (h *RouterHandler) Update(c *fiber.Ctx) error {
 	}
 	router, err := h.routerService.Update(c.Context(), tenantID, routerID, service.UpdateRouterInput{
 		Name:          req.Name,
+		RouterType:    req.RouterType,
 		SNMPCommunity: req.SNMPCommunity,
 		IsActive:      req.IsActive,
 	})

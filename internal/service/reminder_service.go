@@ -25,6 +25,7 @@ type ReminderService struct {
 	settingRepo  repository.SettingRepository
 	paymentRepo  repository.PaymentRepository
 	waClient     *whatsapp.Client
+	baseURL      string
 }
 
 func NewReminderService(
@@ -50,6 +51,13 @@ func (s *ReminderService) WithSettingRepo(repo repository.SettingRepository) *Re
 
 func (s *ReminderService) WithPaymentRepo(repo repository.PaymentRepository) *ReminderService {
 	s.paymentRepo = repo
+	return s
+}
+
+// WithBaseURL sets the app base URL used to build the public self-service
+// payment link ({link_bayar}) for WhatsApp reminders/broadcasts.
+func (s *ReminderService) WithBaseURL(baseURL string) *ReminderService {
+	s.baseURL = strings.TrimRight(baseURL, "/")
 	return s
 }
 
@@ -147,11 +155,12 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 		return &TriggerResult{Message: "No active reminders configured"}, nil
 	}
 
-	// Check once whether this tenant has an active payment gateway configured.
+	// Online payment is offered in reminders only when the tenant's gateway is
+	// live (configured + production mode). Matches the portal & public pay page.
 	hasPG := false
-	if s.paymentRepo != nil && s.tenantRepo != nil {
+	if s.tenantRepo != nil {
 		tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
-		if err == nil && tenant != nil && tenant.PGAPIKey != "" {
+		if err == nil && tenant != nil && tenant.IsOnlinePaymentActive() {
 			hasPG = true
 		}
 	}
@@ -207,14 +216,21 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 				paket = inv.Customer.Package.Name
 			}
 
-			// Resolve payment URL only when needed and PG is active.
+			// Resolve gateway checkout URL only when needed and PG is active.
 			paymentURL := ""
-			if needsPaymentURL && hasPG {
+			if needsPaymentURL && hasPG && s.paymentRepo != nil {
 				if url, err := s.paymentRepo.FindActivePaymentURL(ctx, tenantID, inv.ID); err == nil {
 					paymentURL = url
 				} else {
 					log.Printf("[reminder] failed to fetch payment URL for invoice %s: %v", inv.ID, err)
 				}
+			}
+
+			// Public self-service payment page — works for a mass blast even when no
+			// gateway checkout link exists yet; the customer picks the method there.
+			selfPayURL := ""
+			if hasPG && s.baseURL != "" && inv.Customer.CustomerCode != "" {
+				selfPayURL = s.baseURL + "/pay/" + tenantID + "/" + inv.Customer.CustomerCode
 			}
 
 			msg := strings.ReplaceAll(reminder.MessageTemplate, "{salam}", salam)
@@ -227,11 +243,17 @@ func (s *ReminderService) TriggerReminders(ctx context.Context, tenantID string)
 			msg = strings.ReplaceAll(msg, "{kode_pelanggan}", inv.Customer.CustomerCode)
 			msg = strings.ReplaceAll(msg, "{alamat}", inv.Customer.Address)
 			msg = strings.ReplaceAll(msg, "{payment_url}", paymentURL)
+			msg = strings.ReplaceAll(msg, "{link_bayar}", selfPayURL)
 
-			// Attach CTA button when a payment URL is available.
+			// Attach CTA button: prefer an existing gateway checkout link, otherwise
+			// fall back to the public self-service payment page.
+			ctaURL := paymentURL
+			if ctaURL == "" {
+				ctaURL = selfPayURL
+			}
 			var ctaButton *whatsapp.CtaButton
-			if paymentURL != "" {
-				ctaButton = &whatsapp.CtaButton{Text: "💳 Bayar Online", URL: paymentURL}
+			if ctaURL != "" {
+				ctaButton = &whatsapp.CtaButton{Text: "💳 Bayar Online", URL: ctaURL}
 			}
 
 			reminderItems = append(reminderItems, whatsapp.ReminderItem{

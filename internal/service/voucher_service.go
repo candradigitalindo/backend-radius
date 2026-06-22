@@ -484,7 +484,7 @@ func (s *VoucherService) PurchaseVoucher(ctx context.Context, input PurchaseVouc
 }
 
 // ProcessVoucherTripayWebhook handles a Tripay callback for a voucher payment.
-func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, tenantSlug string, payload payment.TripayCallbackPayload) error {
+func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, tenantSlug string, rawBody []byte, signature string, payload payment.TripayCallbackPayload) error {
 	if s.tenantRepo == nil {
 		return fmt.Errorf("tenant repo tidak dikonfigurasi")
 	}
@@ -496,7 +496,7 @@ func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, tenant
 		return fmt.Errorf("payment gateway belum dikonfigurasi")
 	}
 	client := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
-	if !client.VerifyWebhookSignature(payload) {
+	if !client.VerifyCallbackSignature(rawBody, signature) {
 		return fmt.Errorf("signature Tripay tidak valid")
 	}
 

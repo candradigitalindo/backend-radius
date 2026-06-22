@@ -20,6 +20,7 @@ type Customer struct {
 	PackageID               *string    `json:"package_id,omitempty"`
 	RouterID                *string    `json:"router_id,omitempty"`
 	ODPPortID               *string    `json:"odp_port_id,omitempty"`
+	ResellerID              *string    `json:"reseller_id,omitempty"`
 	JoinDate                time.Time  `json:"join_date"`
 	BillingDate             int        `json:"billing_date"`
 	BillingType             string     `json:"billing_type"`

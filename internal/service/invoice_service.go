@@ -14,6 +14,7 @@ import (
 	"github.com/candrasyahputra/radius-server/internal/pkg/billing"
 	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
+	"github.com/jackc/pgx/v5"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 )
 
@@ -23,6 +24,7 @@ var (
 	ErrInvoiceExists             = errors.New("Faktur sudah ada untuk periode ini")
 	ErrPaymentNotFound           = errors.New("Pembayaran tidak ditemukan")
 	ErrInvoiceNotOwnedByCustomer = errors.New("Faktur bukan milik pelanggan ini")
+	ErrPaymentGatewayInactive    = errors.New("Pembayaran online belum aktif untuk tenant ini")
 )
 
 type InvoiceService struct {
@@ -34,6 +36,7 @@ type InvoiceService struct {
 	settingRepo        repository.SettingRepository
 	billingProfileRepo repository.BillingProfileRepository
 	rewardSvc          *RewardService
+	resellerSvc        *ResellerService
 	notifSvc           *NotificationService
 	waClient           *whatsapp.Client
 	baseURL            string
@@ -94,6 +97,22 @@ func (s *InvoiceService) WithBaseURL(baseURL string) *InvoiceService {
 func (s *InvoiceService) WithReward(rewardSvc *RewardService) *InvoiceService {
 	s.rewardSvc = rewardSvc
 	return s
+}
+
+func (s *InvoiceService) WithReseller(resellerSvc *ResellerService) *InvoiceService {
+	s.resellerSvc = resellerSvc
+	return s
+}
+
+// onInvoicePaid runs the post-payment automations shared by every payment path
+// (manual + Tripay/Midtrans/Xendit webhooks): reseller commission + reward.
+func (s *InvoiceService) onInvoicePaid(tenantID string, invoice *model.Invoice) {
+	if s.resellerSvc != nil {
+		go s.resellerSvc.ProcessCommissionOnPayment(context.Background(), tenantID, invoice.CustomerID, invoice.ID, invoice.TotalAmount)
+	}
+	if s.rewardSvc != nil {
+		go s.rewardSvc.ProcessRewardOnPayment(context.Background(), tenantID, invoice.CustomerID)
+	}
 }
 
 // WithBillingProfileRepo enables per-customer billing profile resolution.
@@ -857,7 +876,7 @@ Terima kasih. 🙏`
 //   - Tripay: return portal invoice URL (method selection needed on portal)
 //   - No PG: return empty string
 func (s *InvoiceService) autoCreateOrPortalPaymentURL(ctx context.Context, tenant *model.Tenant, invoice model.Invoice, customer model.Customer) string {
-	if tenant == nil || tenant.PGAPIKey == "" {
+	if tenant == nil || !tenant.IsOnlinePaymentActive() {
 		return ""
 	}
 
@@ -1058,10 +1077,8 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, input RecordPaymentI
 	// Auto-activate customer if currently isolated
 	s.autoActivateCustomer(ctx, input.TenantID, invoice.CustomerID)
 
-	// Process reward automation (referral qualification + loyalty check)
-	if s.rewardSvc != nil {
-		go s.rewardSvc.ProcessRewardOnPayment(context.Background(), input.TenantID, invoice.CustomerID)
-	}
+	// Post-payment automations: reseller commission + reward (referral/loyalty)
+	s.onInvoicePaid(input.TenantID, invoice)
 
 	// Send payment confirmation via WhatsApp
 	go s.sendPaymentNotification(context.Background(), input.TenantID, invoice, input.PaymentMethod)
@@ -1124,8 +1141,8 @@ func (s *InvoiceService) CreateGatewayPayment(ctx context.Context, input Payment
 	if err != nil {
 		return nil, fmt.Errorf("load tenant: %w", err)
 	}
-	if tenant == nil || tenant.PGAPIKey == "" {
-		return nil, fmt.Errorf("payment gateway belum dikonfigurasi untuk tenant ini")
+	if tenant == nil || !tenant.IsOnlinePaymentActive() {
+		return nil, ErrPaymentGatewayInactive
 	}
 
 	switch tenant.PGProvider {
@@ -1289,7 +1306,7 @@ func (s *InvoiceService) createXenditPayment(ctx context.Context, tenant *model.
 }
 
 // ProcessTripayWebhook handles a Tripay callback and marks the invoice paid on success.
-func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, tenantSlug string, payload payment.TripayCallbackPayload) error {
+func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, tenantSlug string, rawBody []byte, signature string, payload payment.TripayCallbackPayload) error {
 	if s.tenantRepo == nil {
 		return fmt.Errorf("tenant repo tidak dikonfigurasi")
 	}
@@ -1301,7 +1318,7 @@ func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, tenantSlug st
 		return fmt.Errorf("payment gateway belum dikonfigurasi untuk tenant")
 	}
 	tripayClient := payment.NewTripayClient(tenant.PGAPIKey, tenant.PGSecretKey, tenant.PGMerchantID, tenant.PGSandbox)
-	if !tripayClient.VerifyWebhookSignature(payload) {
+	if !tripayClient.VerifyCallbackSignature(rawBody, signature) {
 		return fmt.Errorf("signature webhook Tripay tidak valid")
 	}
 
@@ -1337,10 +1354,8 @@ func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, tenantSlug st
 			// Auto-activate customer if currently isolated
 			s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
 
-			// Process reward automation
-			if s.rewardSvc != nil {
-				go s.rewardSvc.ProcessRewardOnPayment(context.Background(), paymentRecord.TenantID, invoice.CustomerID)
-			}
+			// Post-payment automations: reseller commission + reward
+			s.onInvoicePaid(paymentRecord.TenantID, invoice)
 
 			// Send payment confirmation via WhatsApp
 			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
@@ -1409,10 +1424,8 @@ func (s *InvoiceService) ProcessMidtransWebhook(ctx context.Context, tenantSlug 
 			// Auto-activate customer if currently isolated
 			s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
 
-			// Process reward automation
-			if s.rewardSvc != nil {
-				go s.rewardSvc.ProcessRewardOnPayment(context.Background(), paymentRecord.TenantID, invoice.CustomerID)
-			}
+			// Post-payment automations: reseller commission + reward
+			s.onInvoicePaid(paymentRecord.TenantID, invoice)
 
 			// Send payment confirmation via WhatsApp
 			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
@@ -1533,11 +1546,12 @@ func (s *InvoiceService) VerifyInvoiceOwnership(ctx context.Context, tenantID, c
 }
 
 type PublicCustomerInfo struct {
-	CustomerCode string `json:"customer_code"`
-	Name         string `json:"name"`
-	Phone        string `json:"phone"`
-	PackageName  string `json:"package_name"`
-	Status       string `json:"status"`
+	CustomerCode        string `json:"customer_code"`
+	Name                string `json:"name"`
+	Phone               string `json:"phone"`
+	PackageName         string `json:"package_name"`
+	Status              string `json:"status"`
+	OnlinePaymentActive bool   `json:"online_payment_active"`
 }
 
 type PublicInvoiceInfo struct {
@@ -1554,6 +1568,9 @@ type PublicInvoiceInfo struct {
 func (s *InvoiceService) GetPublicCustomerInfo(ctx context.Context, tenantID, customerCode string) (*PublicCustomerInfo, []PublicInvoiceInfo, error) {
 	customer, err := s.customerRepo.FindByCode(ctx, tenantID, customerCode)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrCustomerNotFound
+		}
 		return nil, nil, fmt.Errorf("find customer: %w", err)
 	}
 	if customer == nil {
@@ -1568,6 +1585,14 @@ func (s *InvoiceService) GetPublicCustomerInfo(ctx context.Context, tenantID, cu
 	}
 	if customer.Package != nil {
 		info.PackageName = customer.Package.Name
+	}
+
+	// Expose whether online payment is live, so the public page can hide pay
+	// buttons when the tenant's gateway is inactive or in sandbox mode.
+	if s.tenantRepo != nil {
+		if tenant, terr := s.tenantRepo.FindByID(ctx, tenantID); terr == nil && tenant != nil {
+			info.OnlinePaymentActive = tenant.IsOnlinePaymentActive()
+		}
 	}
 
 	invoices, _, err := s.invoiceRepo.ListByCustomer(ctx, tenantID, customer.ID, 1, 12)

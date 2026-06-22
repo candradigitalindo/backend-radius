@@ -80,7 +80,7 @@ func (r *customerRepository) Create(ctx context.Context, customer *model.Custome
 			billing_type, billing_deadline, billing_profile_id,
 			pending_billing_profile_id, previous_package_price, package_changed_at,
 			custom_price, discount, additional_fee, fee_description, status, notes,
-			referral_code, created_at, updated_at
+			referral_code, created_at, updated_at, reseller_id
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13,
@@ -88,7 +88,7 @@ func (r *customerRepository) Create(ctx context.Context, customer *model.Custome
 			$20, $21, $22,
 			$23, $24, $25,
 			$26, $27, $28, $29, $30, $31,
-			$32, $33, $34
+			$32, $33, $34, $35
 		)
 	`
 
@@ -104,7 +104,7 @@ func (r *customerRepository) Create(ctx context.Context, customer *model.Custome
 		customer.CustomPrice, customer.Discount, customer.AdditionalFee,
 		customer.FeeDescription, customer.Status, customer.Notes,
 		customer.ReferralCode,
-		customer.CreatedAt, customer.UpdatedAt,
+		customer.CreatedAt, customer.UpdatedAt, customer.ResellerID,
 	)
 	return err
 }
@@ -119,7 +119,7 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		       c.pending_billing_profile_id, COALESCE(c.previous_package_price,0), c.package_changed_at,
 		       c.custom_price, c.discount, c.additional_fee, COALESCE(c.fee_description,''),
 		       c.status, c.isolated_at, COALESCE(c.notes,''), COALESCE(c.password_hash,''),
-		       COALESCE(c.referral_code,''), c.created_at, c.updated_at,
+		       COALESCE(c.referral_code,''), c.created_at, c.updated_at, c.reseller_id,
 		       p.id, p.name, p.bandwidth_up, p.bandwidth_down, p.price,
 		       p.burst_limit, p.address_list,
 		       rt.id, rt.name, rt.vpn_ip, rt.radius_secret, rt.coa_port,
@@ -149,7 +149,7 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		&c.PendingBillingProfileID, &c.PreviousPackagePrice, &c.PackageChangedAt,
 		&c.CustomPrice, &c.Discount, &c.AdditionalFee, &c.FeeDescription,
 		&c.Status, &c.IsolatedAt, &c.Notes, &c.PasswordHash,
-		&c.ReferralCode, &c.CreatedAt, &c.UpdatedAt,
+		&c.ReferralCode, &c.CreatedAt, &c.UpdatedAt, &c.ResellerID,
 		&pkgJoinID, &pkgName, &pkgBandwidthUp, &pkgBandwidthDown, &pkgPrice,
 		&pkgBurstLimit, &pkgAddressList,
 		&rtJoinID, &rtName, &rtVPNIP, &rtRADIUSSecret, &rtCoAPort,
@@ -227,8 +227,8 @@ func (r *customerRepository) Update(ctx context.Context, customer *model.Custome
 			previous_package_price = $22, package_changed_at = $23,
 			custom_price = $24, discount = $25,
 			additional_fee = $26, fee_description = $27, notes = $28,
-			updated_at = $29
-		WHERE id = $30 AND tenant_id = $31
+			updated_at = $29, reseller_id = $30
+		WHERE id = $31 AND tenant_id = $32
 	`
 	_, err := r.db.Exec(ctx, query,
 		customer.CustomerCode, customer.Name, customer.NIK, customer.Phone, customer.Email, customer.Address,
@@ -240,7 +240,7 @@ func (r *customerRepository) Update(ctx context.Context, customer *model.Custome
 		customer.PreviousPackagePrice, customer.PackageChangedAt,
 		customer.CustomPrice, customer.Discount,
 		customer.AdditionalFee, customer.FeeDescription, customer.Notes,
-		customer.UpdatedAt,
+		customer.UpdatedAt, customer.ResellerID,
 		customer.ID, customer.TenantID,
 	)
 	return err

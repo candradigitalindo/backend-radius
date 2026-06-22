@@ -122,7 +122,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	odpService := service.NewODPService(odpRepo, customerRepo, ontRepo)
 	ontService := service.NewONTService(ontRepo).WithCustomerLog(customerLogRepo)
 	ftthService := service.NewFTTHService(ftthRepo)
-	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo).WithPaymentRepo(paymentRepo)
+	reminderService := service.NewReminderService(reminderRepo, invoiceRepo, customerRepo, tenantRepo, waClient).WithSettingRepo(settingRepo).WithPaymentRepo(paymentRepo).WithBaseURL(deps.Config.App.URL)
 	reportService := service.NewReportService(reportRepo)
 	exportService := service.NewExportService(reportRepo)
 	bandwidthService := service.NewBandwidthService(bandwidthRepo)
@@ -145,11 +145,13 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Link GenieACS to customer service for FTTH auto-provisioning
 	customerService.WithGenieACS(ontRepo, genieacsService)
 	customerService.WithCWMPPort(deps.Config.App.CWMPPort)
+	customerService.WithCWMPURL(deps.Config.App.CWMPURL)
 	customerService.WithInvoice(invoiceRepo)
 	customerService.WithBandwidth(bandwidthRepo)
 	customerService.WithReward(rewardService)
 	customerService.WithTenant(tenantRepo, deps.Config.App.URL)
 	invoiceService.WithReward(rewardService)
+	invoiceService.WithReseller(resellerService)
 
 	// Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -614,7 +616,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	voucherProducts.Get("/", voucherHandler.ListProducts)
 	voucherProducts.Post("/", middleware.PermissionGuard("vouchers.create"), voucherHandler.CreateProduct)
 	voucherProducts.Get("/:id", voucherHandler.GetProduct)
-	voucherProducts.Put("/:id", middleware.PermissionGuard("vouchers.create"), voucherHandler.UpdateProduct)
+	voucherProducts.Put("/:id", middleware.PermissionGuard("vouchers.edit"), voucherHandler.UpdateProduct)
 	voucherProducts.Delete("/:id", middleware.PermissionGuard("vouchers.delete"), voucherHandler.DeleteProduct)
 
 	vouchers := protected.Group("/vouchers", middleware.PermissionGuard("vouchers.view"))
@@ -672,7 +674,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	resellers.Get("/:id/commissions", resellerHandler.ListCommissions)
 	resellers.Post("/:id/commissions", middleware.PermissionGuard("resellers.edit"), resellerHandler.AddCommission)
 	resellers.Post("/:id/commissions/pay-all", middleware.PermissionGuard("resellers.edit"), resellerHandler.PayAllPending)
-	resellers.Post("/:id/commission-summary", resellerHandler.GetCommissionSummary)
+	resellers.Get("/:id/commission-summary", resellerHandler.GetCommissionSummary)
 	resellers.Get("/:id/customers", resellerHandler.ListCustomers)
 	resellers.Post("/commissions/:commissionId/pay", middleware.PermissionGuard("resellers.edit"), resellerHandler.PayCommission)
 

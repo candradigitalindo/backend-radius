@@ -35,6 +35,7 @@ type RewardRepository interface {
 	// Reward Claims
 	CreateClaim(ctx context.Context, claim *model.RewardClaim) error
 	ListClaims(ctx context.Context, tenantID string, filter ClaimFilter) ([]model.RewardClaim, int, error)
+	GetClaim(ctx context.Context, tenantID, claimID string) (*model.RewardClaim, error)
 	ApplyClaim(ctx context.Context, tenantID, claimID string) error
 	GetCustomerBalance(ctx context.Context, tenantID, customerID string) (int64, error)
 	GetRewardStats(ctx context.Context, tenantID string) (*RewardStats, error)
@@ -490,6 +491,26 @@ func (r *rewardRepository) ListClaims(ctx context.Context, tenantID string, filt
 		claims = append(claims, cl)
 	}
 	return claims, total, nil
+}
+
+func (r *rewardRepository) GetClaim(ctx context.Context, tenantID, claimID string) (*model.RewardClaim, error) {
+	query := `
+		SELECT id, tenant_id, customer_id, reward_id, referral_id, amount, type, status,
+		       applied_at, expires_at, created_at
+		FROM reward_claims WHERE id = $1 AND tenant_id = $2
+	`
+	var cl model.RewardClaim
+	err := r.db.QueryRow(ctx, query, claimID, tenantID).Scan(
+		&cl.ID, &cl.TenantID, &cl.CustomerID, &cl.RewardID, &cl.ReferralID,
+		&cl.Amount, &cl.Type, &cl.Status, &cl.AppliedAt, &cl.ExpiresAt, &cl.CreatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &cl, nil
 }
 
 func (r *rewardRepository) ApplyClaim(ctx context.Context, tenantID, claimID string) error {

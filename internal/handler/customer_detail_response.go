@@ -21,6 +21,7 @@ type customerDetailResponse struct {
 	PackageID    *string                    `json:"package_id,omitempty"`
 	RouterID     *string                    `json:"router_id,omitempty"`
 	ODPPortID    *string                    `json:"odp_port_id,omitempty"`
+	ResellerID   *string                    `json:"reseller_id,omitempty"`
 	Status       string                     `json:"status"`
 	Notes        string                     `json:"notes"`
 	Access       customerAccessResponse     `json:"access"`
@@ -183,6 +184,7 @@ func newCustomerDetailResponse(customer *model.Customer) *customerDetailResponse
 		PackageID:    customer.PackageID,
 		RouterID:     customer.RouterID,
 		ODPPortID:    customer.ODPPortID,
+		ResellerID:   customer.ResellerID,
 		Status:       customer.Status,
 		Notes:        customer.Notes,
 		Access: customerAccessResponse{

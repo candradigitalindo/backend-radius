@@ -95,7 +95,6 @@ type TripayCallbackPayload struct {
 	IsClosedPayment int    `json:"is_closed_payment"`
 	Status          string `json:"status"`
 	PaidAt          *int64 `json:"paid_at,omitempty"`
-	Signature       string `json:"signature"`
 }
 
 // CreateTransaction creates a closed payment transaction in Tripay.
@@ -185,17 +184,19 @@ func (c *TripayClient) GetTransaction(ctx context.Context, reference string) (*T
 	return &result, nil
 }
 
-// VerifyWebhookSignature validates the HMAC signature from a Tripay webhook.
-// Returns true if the signature is valid.
-func (c *TripayClient) VerifyWebhookSignature(payload TripayCallbackPayload) bool {
-	expected := c.generateSignature(payload.MerchantRef, payload.TotalAmount)
-	// constant-time comparison
-	a, err1 := hex.DecodeString(expected)
-	b, err2 := hex.DecodeString(payload.Signature)
-	if err1 != nil || err2 != nil {
+// VerifyCallbackSignature validates the X-Callback-Signature header that Tripay
+// sends with every callback request. Tripay computes the signature as
+// HMAC-SHA256 over the *entire raw JSON request body* using the merchant private
+// key — NOT over the create-transaction string and NOT from a body field.
+// Docs: https://tripay.co.id/developer?tab=callback
+func (c *TripayClient) VerifyCallbackSignature(rawBody []byte, signature string) bool {
+	if signature == "" || c.privateKey == "" {
 		return false
 	}
-	return hmac.Equal(a, b)
+	mac := hmac.New(sha256.New, []byte(c.privateKey))
+	mac.Write(rawBody)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
 func (c *TripayClient) generateSignature(merchantRef string, amount int64) string {

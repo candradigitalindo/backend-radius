@@ -71,17 +71,20 @@ func (r *routerRepository) Create(ctx context.Context, router *model.Router) err
 	if router.SNMPCommunity == "" {
 		router.SNMPCommunity = "public"
 	}
+	if router.RouterType == "" {
+		router.RouterType = "mikrotik"
+	}
 
 	query := `
 		INSERT INTO routers (
-			id, tenant_id, name, identity, vpn_ip, vpn_public_key,
+			id, tenant_id, name, router_type, identity, vpn_ip, vpn_public_key,
 			radius_secret, coa_port, heartbeat_token, snmp_community, is_active,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`
 
 	_, err := r.db.Exec(ctx, query,
-		router.ID, router.TenantID, router.Name, router.Identity,
+		router.ID, router.TenantID, router.Name, router.RouterType, router.Identity,
 		router.VPNIP, router.VPNPublicKey,
 		router.RADIUSSecret, router.CoAPort, router.HeartbeatToken, router.SNMPCommunity, router.IsActive,
 		router.CreatedAt, router.UpdatedAt,
@@ -91,7 +94,7 @@ func (r *routerRepository) Create(ctx context.Context, router *model.Router) err
 
 func (r *routerRepository) FindByID(ctx context.Context, tenantID, routerID string) (*model.Router, error) {
 	query := `
-		SELECT id, tenant_id, name, COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
+		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
 		       radius_secret, coa_port, COALESCE(heartbeat_token,''),
 		       is_online, last_seen_at, router_os_ver, board_name, uptime,
 		       cpu_load, free_memory, total_memory, snmp_community,
@@ -103,7 +106,7 @@ func (r *routerRepository) FindByID(ctx context.Context, tenantID, routerID stri
 
 	var rt model.Router
 	err := r.db.QueryRow(ctx, query, routerID, tenantID).Scan(
-		&rt.ID, &rt.TenantID, &rt.Name, &rt.Identity,
+		&rt.ID, &rt.TenantID, &rt.Name, &rt.RouterType, &rt.Identity,
 		&rt.VPNIP, &rt.VPNPublicKey,
 		&rt.RADIUSSecret, &rt.CoAPort, &rt.HeartbeatToken,
 		&rt.IsOnline, &rt.LastSeenAt, &rt.RouterOSVer, &rt.BoardName, &rt.Uptime,
@@ -126,14 +129,14 @@ func (r *routerRepository) Update(ctx context.Context, router *model.Router) err
 		UPDATE routers SET
 			name = $1, identity = $2, vpn_ip = $3, vpn_public_key = $4,
 			radius_secret = $5, coa_port = $6, heartbeat_token = $7, snmp_community = $8,
-			nas_ip = $9, is_active = $10, updated_at = $11
-		WHERE id = $12 AND tenant_id = $13
+			nas_ip = $9, is_active = $10, router_type = $11, updated_at = $12
+		WHERE id = $13 AND tenant_id = $14
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		router.Name, router.Identity, router.VPNIP, router.VPNPublicKey,
 		router.RADIUSSecret, router.CoAPort, router.HeartbeatToken, router.SNMPCommunity,
-		router.NASIP, router.IsActive, router.UpdatedAt,
+		router.NASIP, router.IsActive, router.RouterType, router.UpdatedAt,
 		router.ID, router.TenantID,
 	)
 	return err
@@ -187,7 +190,7 @@ func (r *routerRepository) List(ctx context.Context, tenantID string, filter Rou
 	offset := (filter.Page - 1) * filter.PerPage
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, tenant_id, name, COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
+		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
 		       radius_secret, coa_port, COALESCE(heartbeat_token,''),
 		       is_online, last_seen_at, router_os_ver, board_name, uptime,
 		       cpu_load, free_memory, total_memory, snmp_community,
@@ -210,7 +213,7 @@ func (r *routerRepository) List(ctx context.Context, tenantID string, filter Rou
 	for rows.Next() {
 		var rt model.Router
 		if err := rows.Scan(
-			&rt.ID, &rt.TenantID, &rt.Name, &rt.Identity,
+			&rt.ID, &rt.TenantID, &rt.Name, &rt.RouterType, &rt.Identity,
 			&rt.VPNIP, &rt.VPNPublicKey,
 			&rt.RADIUSSecret, &rt.CoAPort, &rt.HeartbeatToken,
 			&rt.IsOnline, &rt.LastSeenAt, &rt.RouterOSVer, &rt.BoardName, &rt.Uptime,
@@ -308,7 +311,7 @@ func (r *routerRepository) FindByIDOnly(ctx context.Context, routerID string) (*
 // This prevents stale nas_ip on WireGuard routers from causing CoA misrouting.
 func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*model.Router, error) {
 	query := `
-		SELECT id, tenant_id, name, COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
+		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
 		       radius_secret, coa_port, is_online, is_active
 		FROM routers
 		WHERE (
@@ -321,7 +324,7 @@ func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*mode
 
 	var router model.Router
 	err := r.db.QueryRow(ctx, query, vpnIP).Scan(
-		&router.ID, &router.TenantID, &router.Name, &router.Identity,
+		&router.ID, &router.TenantID, &router.Name, &router.RouterType, &router.Identity,
 		&router.VPNIP, &router.VPNPublicKey, &router.RADIUSSecret,
 		&router.CoAPort, &router.IsOnline, &router.IsActive,
 	)

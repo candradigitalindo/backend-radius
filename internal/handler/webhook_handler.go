@@ -35,6 +35,8 @@ func (h *WebhookHandler) WithSubscriptionService(subscriptionService *service.Su
 // This endpoint is public (no JWT auth) but validated via HMAC signature inside the service.
 func (h *WebhookHandler) TripayCallback(c *fiber.Ctx) error {
 	slug := c.Params("slug")
+	rawBody := c.Body()
+	signature := c.Get("X-Callback-Signature")
 	var payload payment.TripayCallbackPayload
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
@@ -42,7 +44,7 @@ func (h *WebhookHandler) TripayCallback(c *fiber.Ctx) error {
 
 	log.Printf("[webhook] tripay slug=%s reference=%s status=%s", slug, payload.Reference, payload.Status)
 
-	if err := h.invoiceService.ProcessTripayWebhook(c.Context(), slug, payload); err != nil {
+	if err := h.invoiceService.ProcessTripayWebhook(c.Context(), slug, rawBody, signature, payload); err != nil {
 		log.Printf("[webhook] tripay process error: %v", err)
 		// Always return 200 so Tripay does not keep retrying
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
@@ -79,6 +81,8 @@ func (h *WebhookHandler) TripayVoucherCallback(c *fiber.Ctx) error {
 	}
 
 	slug := c.Params("slug")
+	rawBody := c.Body()
+	signature := c.Get("X-Callback-Signature")
 	var payload payment.TripayCallbackPayload
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
@@ -86,7 +90,7 @@ func (h *WebhookHandler) TripayVoucherCallback(c *fiber.Ctx) error {
 
 	log.Printf("[webhook] tripay voucher slug=%s reference=%s status=%s", slug, payload.Reference, payload.Status)
 
-	if err := h.voucherService.ProcessVoucherTripayWebhook(c.Context(), slug, payload); err != nil {
+	if err := h.voucherService.ProcessVoucherTripayWebhook(c.Context(), slug, rawBody, signature, payload); err != nil {
 		log.Printf("[webhook] tripay voucher error: %v", err)
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
@@ -122,6 +126,8 @@ func (h *WebhookHandler) TripaySubscriptionCallback(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": "Layanan subscription tidak dikonfigurasi"})
 	}
 
+	rawBody := c.Body()
+	signature := c.Get("X-Callback-Signature")
 	var payload payment.TripayCallbackPayload
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
@@ -129,7 +135,7 @@ func (h *WebhookHandler) TripaySubscriptionCallback(c *fiber.Ctx) error {
 
 	log.Printf("[webhook] tripay subscription reference=%s status=%s", payload.Reference, payload.Status)
 
-	if err := h.subscriptionService.ProcessSubTripayWebhook(c.Context(), payload); err != nil {
+	if err := h.subscriptionService.ProcessSubTripayWebhook(c.Context(), rawBody, signature, payload); err != nil {
 		log.Printf("[webhook] tripay subscription error: %v", err)
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}

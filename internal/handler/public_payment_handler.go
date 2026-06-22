@@ -82,6 +82,9 @@ func (h *PublicPaymentHandler) CreatePayment(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrInvoiceAlreadyPaid) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"success": false, "message": "Faktur sudah dibayar"})
 		}
+		if errors.Is(err, service.ErrPaymentGatewayInactive) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Pembayaran online belum aktif. Hubungi admin Anda."})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": err.Error()})
 	}
 

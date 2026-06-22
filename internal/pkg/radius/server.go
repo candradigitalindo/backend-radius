@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"layeh.com/radius"
@@ -231,14 +232,14 @@ func (s *Server) handleAuth(w radius.ResponseWriter, r *radius.Request) {
 	// Try PPPoE customer first
 	customer, err := s.customerRepo.FindByPPPoEUsername(ctx, router.TenantID, username)
 	if err == nil && customer != nil {
-		s.handleCustomerAuth(w, r, customer, nasIP, method)
+		s.handleCustomerAuth(w, r, customer, nasIP, method, router.RouterType)
 		return
 	}
 
 	// Try voucher hotspot user
 	voucher, err := s.voucherRepo.FindByUsernameWithProduct(ctx, username)
 	if err == nil && voucher != nil {
-		s.handleVoucherAuth(w, r, voucher, nasIP, method)
+		s.handleVoucherAuth(w, r, voucher, nasIP, method, router.RouterType)
 		return
 	}
 
@@ -246,7 +247,63 @@ func (s *Server) handleAuth(w radius.ResponseWriter, r *radius.Request) {
 	_ = w.Write(r.Response(radius.CodeAccessReject))
 }
 
-func (s *Server) handleCustomerAuth(w radius.ResponseWriter, r *radius.Request, customer *model.Customer, nasIP net.IP, method authMethod) {
+// applyRateLimit adds the bandwidth/speed-limit attributes appropriate for the
+// router brand. Authentication, IP assignment, accounting and CoA are standard
+// RADIUS and identical for every vendor — only the rate-limit attribute differs.
+//
+//	mikrotik / vyos        : Mikrotik-Rate-Limit VSA (accel-ppp on VyOS/EdgeRouter reads it too)
+//	huawei                 : Huawei-Input/Output-Average-Rate VSAs (bit/s)
+//	cisco / ruijie / juniper : Filter-Id referencing a NAS-local QoS policy named after the package
+//	                           (Cisco/Ruijie also receive ip:sub-qos-policy AVPairs)
+//
+// Returns a short human-readable description for logging.
+func (s *Server) applyRateLimit(resp *radius.Packet, routerType string, upMbps, downMbps int, burst, addressList, packageName string) string {
+	switch routerType {
+	case "huawei":
+		resp.Add(26, radius.Attribute(EncodeVSAInt(HuaweiVendorID, HuaweiAttrInputAverageRate, uint32(upMbps)*1_000_000)))
+		resp.Add(26, radius.Attribute(EncodeVSAInt(HuaweiVendorID, HuaweiAttrOutputAverageRate, uint32(downMbps)*1_000_000)))
+		return fmt.Sprintf("huawei %dM/%dM", upMbps, downMbps)
+
+	case "cisco", "ruijie", "juniper":
+		policy := sanitizePolicyName(packageName)
+		if policy != "" {
+			resp.Add(11, radius.Attribute([]byte(policy))) // Filter-Id (RFC 2865)
+		}
+		if routerType != "juniper" && policy != "" {
+			resp.Add(26, radius.Attribute(EncodeVSA(CiscoVendorID, CiscoAttrAVPair, "ip:sub-qos-policy-in="+policy)))
+			resp.Add(26, radius.Attribute(EncodeVSA(CiscoVendorID, CiscoAttrAVPair, "ip:sub-qos-policy-out="+policy)))
+		}
+		return fmt.Sprintf("%s filter-id=%s", routerType, policy)
+
+	default: // mikrotik, vyos, or unknown → MikroTik-style inline rate
+		rate := fmt.Sprintf("%dM/%dM", upMbps, downMbps)
+		if burst != "" {
+			rate = fmt.Sprintf("%dM/%dM %sM/%sM %dM/%dM 30/30",
+				upMbps, downMbps, burst, burst, upMbps, downMbps)
+		}
+		resp.Add(26, radius.Attribute(EncodeVSA(MikroTikVendorID, MikroTikAttrRateLimit, rate)))
+		if addressList != "" {
+			resp.Add(26, radius.Attribute(EncodeVSA(MikroTikVendorID, MikroTikAttrAddressList, addressList)))
+		}
+		return rate
+	}
+}
+
+// sanitizePolicyName makes a package name safe to use as a NAS policy/filter name.
+func sanitizePolicyName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
+func (s *Server) handleCustomerAuth(w radius.ResponseWriter, r *radius.Request, customer *model.Customer, nasIP net.IP, method authMethod, routerType string) {
 	username := customer.PPPoEUsername
 
 	// Validate password based on auth method
@@ -323,27 +380,10 @@ func (s *Server) handleCustomerAuth(w radius.ResponseWriter, r *radius.Request, 
 		}
 	}
 
-	// Set bandwidth via Mikrotik-Rate-Limit VSA
-	// Format: "rx-rate/tx-rate" (from user perspective: download/upload)
-	rateLimit := fmt.Sprintf("%dM/%dM", customer.Package.BandwidthUp, customer.Package.BandwidthDown)
-
-	// Append burst limit if configured
-	// Format: "rx/tx rx-burst/tx-burst threshold/threshold burst-time/burst-time"
-	if customer.Package.BurstLimit != "" {
-		rateLimit = fmt.Sprintf("%dM/%dM %sM/%sM %dM/%dM 30/30",
-			customer.Package.BandwidthUp, customer.Package.BandwidthDown,
-			customer.Package.BurstLimit, customer.Package.BurstLimit,
-			customer.Package.BandwidthUp, customer.Package.BandwidthDown)
-	}
-
-	vsaData := EncodeVSA(MikroTikVendorID, MikroTikAttrRateLimit, rateLimit)
-	resp.Add(26, radius.Attribute(vsaData))
-
-	// Set address list if configured
-	if customer.Package.AddressList != "" {
-		vsaAddrList := EncodeVSA(MikroTikVendorID, MikroTikAttrAddressList, customer.Package.AddressList)
-		resp.Add(26, radius.Attribute(vsaAddrList))
-	}
+	// Apply per-vendor bandwidth/speed limit (vendor-specific attributes).
+	rateLimit := s.applyRateLimit(resp, routerType,
+		customer.Package.BandwidthUp, customer.Package.BandwidthDown,
+		customer.Package.BurstLimit, customer.Package.AddressList, customer.Package.Name)
 
 	// Add MS-CHAP2-Success attribute for MS-CHAPv2 auth
 	if method == authMSCHAP2 && mschap2 != nil {
@@ -351,13 +391,13 @@ func (s *Server) handleCustomerAuth(w radius.ResponseWriter, r *radius.Request, 
 	}
 
 	methodName := map[authMethod]string{authPAP: "pap", authCHAP: "chap", authMSCHAP2: "mschapv2"}[method]
-	log.Printf("RADIUS AUTH ACCEPT: user=%s package=%s rate=%s nas=%s (%s)",
-		username, customer.Package.Name, rateLimit, nasIP, methodName)
+	log.Printf("RADIUS AUTH ACCEPT: user=%s package=%s rate=[%s] nas=%s type=%s (%s)",
+		username, customer.Package.Name, rateLimit, nasIP, routerType, methodName)
 
 	_ = w.Write(resp)
 }
 
-func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, voucher *model.Voucher, nasIP net.IP, method authMethod) {
+func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, voucher *model.Voucher, nasIP net.IP, method authMethod, routerType string) {
 	username := voucher.Username
 
 	// Validate password based on auth method
@@ -415,10 +455,9 @@ func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, v
 	// Build Access-Accept response
 	resp := r.Response(radius.CodeAccessAccept)
 
-	// Set bandwidth via Mikrotik-Rate-Limit VSA
-	rateLimit := fmt.Sprintf("%dM/%dM", voucher.Product.BandwidthUp, voucher.Product.BandwidthDown)
-	vsaData := EncodeVSA(MikroTikVendorID, MikroTikAttrRateLimit, rateLimit)
-	resp.Add(26, radius.Attribute(vsaData))
+	// Apply per-vendor bandwidth/speed limit.
+	rateLimit := s.applyRateLimit(resp, routerType,
+		voucher.Product.BandwidthUp, voucher.Product.BandwidthDown, "", "", voucher.Product.Name)
 
 	// Set session timeout: remaining time until expiry
 	if voucher.ExpiresAt != nil {
@@ -433,8 +472,8 @@ func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, v
 		microsoft.MSCHAP2Success_Add(resp, mschap2.success)
 	}
 
-	log.Printf("RADIUS AUTH ACCEPT: voucher=%s product=%s rate=%s nas=%s",
-		username, voucher.Product.Name, rateLimit, nasIP)
+	log.Printf("RADIUS AUTH ACCEPT: voucher=%s product=%s rate=[%s] nas=%s type=%s",
+		username, voucher.Product.Name, rateLimit, nasIP, routerType)
 
 	_ = w.Write(resp)
 }

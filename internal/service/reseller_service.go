@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/repository"
@@ -67,4 +68,44 @@ func (s *ResellerService) GetCommissionSummary(ctx context.Context, tenantID, re
 
 func (s *ResellerService) ListCustomers(ctx context.Context, tenantID, resellerID string) ([]model.Customer, error) {
 	return s.resellerRepo.ListCustomers(ctx, tenantID, resellerID)
+}
+
+// ProcessCommissionOnPayment auto-creates a pending commission for the customer's
+// reseller (if any) when an invoice is paid. Commission = invoiceAmount × rate%.
+// Idempotent per invoice, so repeated webhooks don't double-credit.
+func (s *ResellerService) ProcessCommissionOnPayment(ctx context.Context, tenantID, customerID, invoiceID string, invoiceAmount int64) {
+	reseller, err := s.resellerRepo.FindResellerByCustomer(ctx, tenantID, customerID)
+	if err != nil {
+		log.Printf("[reseller] find reseller for customer %s: %v", customerID, err)
+		return
+	}
+	if reseller == nil || reseller.Status != "active" || reseller.CommissionRate <= 0 {
+		return
+	}
+
+	exists, err := s.resellerRepo.CommissionExistsForInvoice(ctx, tenantID, invoiceID)
+	if err != nil {
+		log.Printf("[reseller] check commission for invoice %s: %v", invoiceID, err)
+		return
+	}
+	if exists {
+		return
+	}
+
+	amount := int64(float64(invoiceAmount) * reseller.CommissionRate / 100.0)
+	if amount <= 0 {
+		return
+	}
+
+	comm := &model.ResellerCommission{
+		TenantID:   tenantID,
+		ResellerID: reseller.ID,
+		InvoiceID:  invoiceID,
+		CustomerID: customerID,
+		Amount:     amount,
+		Status:     "pending",
+	}
+	if err := s.resellerRepo.AddCommission(ctx, comm); err != nil {
+		log.Printf("[reseller] auto-create commission (reseller %s, invoice %s): %v", reseller.ID, invoiceID, err)
+	}
 }

@@ -6,6 +6,7 @@ type Router struct {
 	ID             string     `json:"id"`
 	TenantID       string     `json:"tenant_id"`
 	Name           string     `json:"name"`
+	RouterType     string     `json:"router_type"` // mikrotik | cisco | huawei | juniper | vyos | ruijie
 	Identity       string     `json:"identity"`
 	VPNIP          string     `json:"vpn_ip"`
 	VPNPublicKey   string     `json:"vpn_public_key"`

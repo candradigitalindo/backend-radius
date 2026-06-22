@@ -35,8 +35,9 @@ type AppConfig struct {
 	Env      string
 	Port     string
 	Debug    bool
-	URL      string // Base URL for callback/webhook URLs (e.g. https://api.example.com)
-	CWMPPort string // Port for ACS/CWMP URL shown to customers (e.g. 7547)
+	URL      string // Base URL for callback/webhook URLs (e.g. https://app.dradius.net)
+	CWMPURL  string // Full ACS URL shown to ONT devices (e.g. https://app.dradius.net/cwmp); falls back to IP:port if empty
+	CWMPPort string // Port for ACS/CWMP fallback URL (e.g. 7547)
 }
 
 type DBConfig struct {
@@ -123,6 +124,7 @@ func Load() (*Config, error) {
 			Port:     getEnv("APP_PORT", "3000"),
 			Debug:    getEnvBool("APP_DEBUG", true),
 			URL:      getEnv("APP_URL", "http://localhost:3000"),
+			CWMPURL:  getEnv("CWMP_URL", ""),
 			CWMPPort: getEnv("CWMP_PORT", "7547"),
 		},
 		DB: DBConfig{
