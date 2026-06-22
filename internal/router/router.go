@@ -105,7 +105,8 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	customerService := service.NewCustomerService(customerRepo, sessionRepo)
 	snmpService := service.NewSNMPService(oltRepo, vpnMgr)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, vpnMgr).WithSNMP(snmpService).
-		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret)
+		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret).
+		WithIfaceRepo(repository.NewRouterIfaceRepository(deps.DB))
 	packageService := service.NewPackageService(packageRepo)
 	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL).WithSettingRepo(settingRepo).WithBillingProfileRepo(billingProfileRepo)
 	ticketService := service.NewTicketService(ticketRepo)
@@ -249,6 +250,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 
 	// Router heartbeat (public - called by MikroTik)
 	v1.Post("/routers/heartbeat", publicLimiter, routerHandler.Heartbeat)
+	v1.Post("/routers/interface-stats", publicLimiter, routerHandler.PushInterfaceStats)
 
 	// Swagger UI at root (port 3000)
 	app.Get("/", func(c *fiber.Ctx) error {
@@ -481,6 +483,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	routers.Get("/:id/sessions", routerHandler.ListSessions)
 	routers.Get("/:id/traffic", routerHandler.GetTraffic)
 	routers.Get("/:id/interfaces", routerHandler.GetInterfaces)
+	routers.Get("/:id/interface-stats", routerHandler.GetInterfaceStats)
 	routers.Post("/:id/test", middleware.PermissionGuard("routers.edit"), routerHandler.TestConnection)
 	routers.Post("/:id/sync", middleware.PermissionGuard("routers.edit"), routerHandler.SyncSessions)
 	routers.Post("/:id/vpn-key", middleware.PermissionGuard("routers.edit"), routerHandler.RegisterVPNKey)

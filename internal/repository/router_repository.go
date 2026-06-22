@@ -97,7 +97,7 @@ func (r *routerRepository) FindByID(ctx context.Context, tenantID, routerID stri
 		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
 		       radius_secret, coa_port, COALESCE(heartbeat_token,''),
 		       is_online, last_seen_at, router_os_ver, board_name, uptime,
-		       cpu_load, free_memory, total_memory, snmp_community,
+		       cpu_load, free_memory, total_memory, snmp_community, COALESCE(nas_ip,''),
 		       is_active, created_at, updated_at
 		FROM routers
 		WHERE id = $1 AND tenant_id = $2
@@ -110,7 +110,7 @@ func (r *routerRepository) FindByID(ctx context.Context, tenantID, routerID stri
 		&rt.VPNIP, &rt.VPNPublicKey,
 		&rt.RADIUSSecret, &rt.CoAPort, &rt.HeartbeatToken,
 		&rt.IsOnline, &rt.LastSeenAt, &rt.RouterOSVer, &rt.BoardName, &rt.Uptime,
-		&rt.CPULoad, &rt.FreeMemory, &rt.TotalMemory, &rt.SNMPCommunity,
+		&rt.CPULoad, &rt.FreeMemory, &rt.TotalMemory, &rt.SNMPCommunity, &rt.NASIP,
 		&rt.IsActive, &rt.CreatedAt, &rt.UpdatedAt,
 	)
 	if err != nil {
@@ -306,18 +306,17 @@ func (r *routerRepository) FindByIDOnly(ctx context.Context, routerID string) (*
 	return &rt, nil
 }
 
-// FindByVPNIP looks up an active router by VPN IP.
-// Falls back to nas_ip ONLY for routers without a VPN IP (Direct mode).
-// This prevents stale nas_ip on WireGuard routers from causing CoA misrouting.
+// FindByVPNIP resolves the registered router that a RADIUS packet came from,
+// by its source/NAS IP. It matches either the WireGuard VPN IP (VPN mode) or the
+// WAN IP / nas_ip (Direct / IP Publik mode), so authentication works regardless
+// of whether a tunnel is used. An exact VPN-IP match is always preferred so a
+// stale nas_ip can never shadow a live WireGuard router.
 func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*model.Router, error) {
 	query := `
 		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
-		       radius_secret, coa_port, is_online, is_active
+		       radius_secret, coa_port, is_online, is_active, COALESCE(nas_ip,'')
 		FROM routers
-		WHERE (
-		    vpn_ip = $1
-		    OR (nas_ip = $1 AND (vpn_ip IS NULL OR vpn_ip = ''))
-		) AND is_active = TRUE
+		WHERE (vpn_ip = $1 OR nas_ip = $1) AND is_active = TRUE
 		ORDER BY (vpn_ip = $1) DESC
 		LIMIT 1
 	`
@@ -326,7 +325,7 @@ func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*mode
 	err := r.db.QueryRow(ctx, query, vpnIP).Scan(
 		&router.ID, &router.TenantID, &router.Name, &router.RouterType, &router.Identity,
 		&router.VPNIP, &router.VPNPublicKey, &router.RADIUSSecret,
-		&router.CoAPort, &router.IsOnline, &router.IsActive,
+		&router.CoAPort, &router.IsOnline, &router.IsActive, &router.NASIP,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {

@@ -107,6 +107,44 @@ func (h *RouterHandler) GetByID(c *fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
+// PushInterfaceStats receives interface counters pushed by a router (token-auth).
+// This is the VPN-free path: the router posts outbound, server derives throughput.
+func (h *RouterHandler) PushInterfaceStats(c *fiber.Ctx) error {
+	var req struct {
+		Token      string                   `json:"token"`
+		Interfaces []service.IfaceStatInput `json:"interfaces"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
+	}
+	if req.Token == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Token wajib diisi"})
+	}
+	if err := h.routerService.RecordInterfaceStats(c.Context(), req.Token, req.Interfaces); err != nil {
+		if errors.Is(err, service.ErrInvalidHeartbeat) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Token tidak valid"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan statistik interface"})
+	}
+	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+// GetInterfaceStats returns recent pushed interface throughput for the chart.
+func (h *RouterHandler) GetInterfaceStats(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	routerID := c.Params("id")
+	minutes, _ := strconv.Atoi(c.Query("minutes", "10"))
+
+	stats, err := h.routerService.GetInterfaceStats(c.Context(), tenantID, routerID, minutes)
+	if err != nil {
+		if errors.Is(err, service.ErrRouterNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat statistik interface"})
+	}
+	return c.JSON(fiber.Map{"data": stats})
+}
+
 func (h *RouterHandler) GetInterfaces(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 	routerID := c.Params("id")
@@ -207,8 +245,12 @@ func (h *RouterHandler) Heartbeat(c *fiber.Ctx) error {
 	if req.Token == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Token wajib diisi"})
 	}
-	// c.IP() already returns just the IP without port
+	// Real router IP: behind nginx/Cloudflare, c.IP() is the proxy. The original
+	// client (router public IP) is the first entry of X-Forwarded-For.
 	senderIP := strings.TrimSpace(c.IP())
+	if ips := c.IPs(); len(ips) > 0 && strings.TrimSpace(ips[0]) != "" {
+		senderIP = strings.TrimSpace(ips[0])
+	}
 
 	err := h.routerService.Heartbeat(c.Context(), req.Token, repository.HeartbeatInfo{
 		Identity:    req.Identity,

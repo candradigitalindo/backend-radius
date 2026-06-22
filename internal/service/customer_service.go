@@ -858,5 +858,11 @@ func (s *CustomerService) disconnectCustomer(ctx context.Context, customer *mode
 	if err != nil || session == nil {
 		return
 	}
-	_ = radiuspkg.DisconnectUser(customer.Router.VPNIP, customer.Router.CoAPort, customer.Router.RADIUSSecret, customer.PPPoEUsername, session.SessionID)
+	// Reach the router on its VPN IP (WireGuard mode) or, for Direct/IP Publik
+	// routers, on the live session's NAS IP (the WAN IP that authenticated).
+	target := customer.Router.CoAAddress()
+	if target == "" {
+		target = session.NASIPAddress
+	}
+	_ = radiuspkg.DisconnectUser(target, customer.Router.CoAPort, customer.Router.RADIUSSecret, customer.PPPoEUsername, session.SessionID)
 }

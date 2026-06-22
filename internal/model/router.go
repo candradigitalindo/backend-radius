@@ -28,6 +28,20 @@ type Router struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
+// CoAAddress returns the address the server should use to reach this router for
+// CoA / Disconnect-Request. WireGuard routers are reachable on their VPN IP;
+// Direct (IP Publik) routers on their last-known WAN IP (nas_ip). This makes
+// outbound RADIUS work the same whether or not a VPN tunnel is used.
+func (r *Router) CoAAddress() string {
+	if r.VPNIP != "" {
+		return r.VPNIP
+	}
+	return r.NASIP
+}
+
+// UsesVPN reports whether the router is operating over a WireGuard tunnel.
+func (r *Router) UsesVPN() bool { return r.VPNIP != "" }
+
 type RouterConnectionLog struct {
 	ID          string    `json:"id"`
 	RouterID    string    `json:"router_id"`

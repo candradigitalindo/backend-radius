@@ -170,12 +170,21 @@ func (s *SNMPService) GetRouterInterfaces(ctx context.Context, ip string, commun
 	if community == "" {
 		community = "public"
 	}
+	if ip == "" {
+		return []MonitorInterface{}, fmt.Errorf("router tidak memiliki alamat yang dapat dijangkau (VPN belum aktif?)")
+	}
 
 	client := s.newSNMPClient(ip, community)
 	if err := client.Connect(); err != nil {
 		return []MonitorInterface{}, fmt.Errorf("connect snmp: %w", err)
 	}
 	defer client.Conn.Close()
+
+	// Fast reachability probe (sysUpTime). Tanpa ini, host yang tak terjangkau
+	// memicu beberapa kali walk timeout (±10 detik); dengan probe gagal ±2 detik.
+	if _, err := client.Get([]string{oidSysUptime}); err != nil {
+		return []MonitorInterface{}, fmt.Errorf("router tidak merespons SNMP di %s — pastikan VPN aktif atau SNMP router dapat dijangkau server", ip)
+	}
 
 	ifaces, err := s.pollInterfaces(client)
 	if err != nil {

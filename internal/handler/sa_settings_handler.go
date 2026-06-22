@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/service"
 )
@@ -151,9 +152,64 @@ func (h *SASettingsHandler) GetWebhookURLs(c *fiber.Ctx) error {
 	})
 }
 
-// TestPGConnection tests the Midtrans/PG connection.
+// TestPGConnection actually verifies the superadmin payment-gateway credentials by
+// calling the provider's API. Credentials may be sent in the body (to test the
+// values currently on screen) or fall back to the saved superadmin settings.
 func (h *SASettingsHandler) TestPGConnection(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{"success": true, "message": "Konfigurasi payment gateway tersimpan"})
+	var req struct {
+		Provider   string `json:"pg_provider"`
+		APIKey     string `json:"pg_api_key"`
+		SecretKey  string `json:"pg_secret_key"`
+		MerchantID string `json:"pg_merchant_id"`
+		Sandbox    *bool  `json:"pg_sandbox"`
+	}
+	_ = c.BodyParser(&req)
+
+	settings, _ := h.settingService.GetAsMap(c.Context(), saTenantID)
+	pick := func(v, key, def string) string {
+		if v != "" {
+			return v
+		}
+		return getSettingDefault(settings, key, def)
+	}
+	provider := pick(req.Provider, "sa_pg_provider", "midtrans")
+	apiKey := pick(req.APIKey, "sa_pg_api_key", "")
+	secretKey := pick(req.SecretKey, "sa_pg_secret_key", "")
+	merchantID := pick(req.MerchantID, "sa_pg_merchant_id", "")
+	sandbox := getSettingBool(settings, "sa_pg_sandbox", false)
+	if req.Sandbox != nil {
+		sandbox = *req.Sandbox
+	}
+
+	bad := func(msg string) error {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "error": msg})
+	}
+
+	var err error
+	switch provider {
+	case "midtrans":
+		if secretKey == "" {
+			return bad("Server Key (Secret Key) Midtrans belum diisi")
+		}
+		err = payment.NewMidtransClient(secretKey, sandbox).TestConnection(c.Context())
+	case "xendit":
+		if apiKey == "" {
+			return bad("Secret API Key Xendit belum diisi")
+		}
+		err = payment.NewXenditClient(apiKey, secretKey, sandbox).TestConnection(c.Context())
+	case "tripay":
+		if apiKey == "" {
+			return bad("API Key Tripay belum diisi")
+		}
+		err = payment.NewTripayClient(apiKey, secretKey, merchantID, sandbox).TestConnection(c.Context())
+	default:
+		return bad("Provider payment gateway tidak dikenal")
+	}
+
+	if err != nil {
+		return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"success": true, "message": "Koneksi payment gateway berhasil"})
 }
 
 // ─── WhatsApp Session endpoints for superadmin ───
