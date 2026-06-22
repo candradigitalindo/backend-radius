@@ -40,6 +40,11 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # WireGuard interface (wg0) is created by the entrypoint; needs NET_ADMIN +
+    # the wireguard kernel module on the host. Without WG_PRIVATE_KEY the app
+    # simply falls back to Direct / IP-Publik mode.
+    cap_add:
+      - NET_ADMIN
     depends_on:
       db:
         condition: service_healthy
@@ -58,6 +63,7 @@ services:
       - "3000:3000"
       - "1812:1812/udp"
       - "1813:1813/udp"
+      - "51820:51820/udp"
 
   worker:
     build:
