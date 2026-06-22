@@ -56,6 +56,13 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:      cfg.App.Name,
 		ErrorHandler: customErrorHandler,
+		// Behind the nginx reverse proxy every request arrives from the proxy's
+		// container IP, so c.IP() must read the real client IP from X-Forwarded-For.
+		// Without this, per-IP rate limiters key every user under the proxy IP and
+		// trip a shared/global 429 on login. Only trust the header from the proxy.
+		ProxyHeader:             fiber.HeaderXForwardedFor,
+		EnableTrustedProxyCheck: true,
+		TrustedProxies:          []string{"127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"},
 	})
 
 	middleware.SetupGlobal(app, cfg.CORS.AllowedOrigins)

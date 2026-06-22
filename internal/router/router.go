@@ -228,12 +228,27 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Public static files (for temporary WhatsApp uploads)
 	app.Static("/temp", "./storage/temp")
 
-	// Limiter for public endpoints
+	// Limiter for public endpoints. Keyed by real client IP (Fiber now reads
+	// X-Forwarded-For via the trusted proxy, so this is no longer a global key).
+	// 30/min/IP gives headroom for login+refresh and for several staff behind a
+	// shared office NAT, while staying low enough to deter password brute-force.
 	publicLimiter := limiter.New(limiter.Config{
-		Max:        10,
+		Max:        30,
 		Expiration: 1 * time.Minute,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
+		},
+	})
+
+	// Limiter for customer portal endpoints. Customers of one ISP usually share
+	// a single public IP (behind the ISP's NAT gateway), so a per-IP limit of 10
+	// is far too low and trips 429 as soon as a few customers use the portal.
+	// Scope the key per IP+tenant and allow a much higher ceiling.
+	portalLimiter := limiter.New(limiter.Config{
+		Max:        60,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP() + "|" + c.Params("slug")
 		},
 	})
 
@@ -295,10 +310,10 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	portalHandler.WithRewardRepo(rewardRepo)
 	portalHandler.WithInvoiceService(invoiceService)
 	publicPortal := v1.Group("/public/portal")
-	publicPortal.Get("/:slug", publicLimiter, portalHandler.GetTenantInfo)
-	publicPortal.Post("/:slug/login", publicLimiter, portalHandler.PortalLogin)
-	publicPortal.Post("/:slug/reset-pin", publicLimiter, portalHandler.RequestResetPIN)
-	publicPortal.Post("/:slug/reset-password", publicLimiter, portalHandler.ResetPasswordWithPIN)
+	publicPortal.Get("/:slug", portalLimiter, portalHandler.GetTenantInfo)
+	publicPortal.Post("/:slug/login", portalLimiter, portalHandler.PortalLogin)
+	publicPortal.Post("/:slug/reset-pin", portalLimiter, portalHandler.RequestResetPIN)
+	publicPortal.Post("/:slug/reset-password", portalLimiter, portalHandler.ResetPasswordWithPIN)
 
 	// Public voucher store
 	publicStore := v1.Group("/public/store")
