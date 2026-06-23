@@ -162,6 +162,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	roleHandler := handler.NewRoleHandler(roleService)
 	customerHandler := handler.NewCustomerHandler(customerService).WithInvoiceService(invoiceService)
 	routerHandler := handler.NewRouterHandler(routerService)
+	internalHandler := handler.NewInternalHandler(tenantRepo, customerRepo, deps.Config.WhatsApp.APISecret)
 	packageHandler := handler.NewPackageHandler(packageService)
 	baseURL := deps.Config.App.URL
 	tenantHandler := handler.NewTenantHandler(tenantService).WithWebhookBaseURL(baseURL)
@@ -264,6 +265,9 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	auth.Post("/reset-password", publicLimiter, authHandler.ResetPasswordWithPIN)
 
 	// Router heartbeat (public - called by MikroTik)
+	// Internal m2m endpoint for the n8n CS bot (guarded by WA_API_SECRET, not JWT).
+	v1.Get("/internal/tenant-by-phone", publicLimiter, internalHandler.TenantByPhone)
+
 	v1.Post("/routers/heartbeat", publicLimiter, routerHandler.Heartbeat)
 	v1.Post("/routers/interface-stats", publicLimiter, routerHandler.PushInterfaceStats)
 

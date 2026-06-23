@@ -17,6 +17,9 @@ type TenantRepository interface {
 	Create(ctx context.Context, tenant *model.Tenant) error
 	FindByID(ctx context.Context, tenantID string) (*model.Tenant, error)
 	FindBySlug(ctx context.Context, slug string) (*model.Tenant, error)
+	// FindByPhone matches a tenant by the last significant digits of its phone,
+	// tolerating 0/62/+62 prefix differences. phoneDigits must be digits-only.
+	FindByPhone(ctx context.Context, phoneDigits string) (*model.Tenant, error)
 	Update(ctx context.Context, tenant *model.Tenant) error
 	List(ctx context.Context, filter TenantFilter) ([]model.Tenant, int, error)
 	UpdateSettings(ctx context.Context, tenant *model.Tenant) error
@@ -128,6 +131,36 @@ func (r *tenantRepository) FindBySlug(ctx context.Context, slug string) (*model.
 
 	var t model.Tenant
 	err := r.db.QueryRow(ctx, query, slug).Scan(
+		&t.ID, &t.Name, &t.Slug, &t.Email, &t.Phone, &t.Address, &t.LogoURL,
+		&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod, &t.DefaultBillingType,
+		&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
+		&t.IsActive, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *tenantRepository) FindByPhone(ctx context.Context, phoneDigits string) (*model.Tenant, error) {
+	if len(phoneDigits) < 8 {
+		return nil, nil
+	}
+	query := `
+		SELECT id, name, slug, email, COALESCE(phone,''), COALESCE(address,''), COALESCE(logo_url,''),
+		       timezone, currency, billing_cycle, due_day, isolir_day, grace_period, COALESCE(default_billing_type,'fixed'),
+		       plan, plan_expires_at, max_customers, is_active, COALESCE(status, 'active'), created_at, updated_at
+		FROM tenants
+		WHERE phone <> '' AND right(regexp_replace(phone, '\D', '', 'g'), 10) = right($1, 10)
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`
+
+	var t model.Tenant
+	err := r.db.QueryRow(ctx, query, phoneDigits).Scan(
 		&t.ID, &t.Name, &t.Slug, &t.Email, &t.Phone, &t.Address, &t.LogoURL,
 		&t.Timezone, &t.Currency, &t.BillingCycle, &t.DueDay, &t.IsolirDay, &t.GracePeriod, &t.DefaultBillingType,
 		&t.Plan, &t.PlanExpiresAt, &t.MaxCustomers,
