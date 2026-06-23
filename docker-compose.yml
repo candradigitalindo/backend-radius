@@ -115,10 +115,34 @@ services:
       - default
       - web
 
+  # n8n — CS bot automation for tenants. Reachable internally by the WA service at
+  # http://n8n:5678 (same default network); UI published on localhost only (access
+  # via SSH tunnel: ssh -L 5678:localhost:5678 <server> → http://localhost:5678).
+  n8n:
+    image: n8nio/n8n:1.112.6
+    container_name: radius_n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Asia/Jakarta
+      - TZ=Asia/Jakarta
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://n8n:5678/
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - default
+
 volumes:
   pgdata:
   redisdata:
   storage:
+  n8n_data:
 
 # 'web' = network bersama reverse-proxy (proxy_nginx). Hanya nginx publik yang join.
 networks:
