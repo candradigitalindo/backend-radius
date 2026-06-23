@@ -281,7 +281,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	})
 
 	// CWMP TR-069 proxy (public - called by ONT devices)
-	cwmpHandler := handler.NewCWMPHandler(genieacsClient, tenantRepo, customerRepo, ontRepo, "http://127.0.0.1:17547")
+	cwmpHandler := handler.NewCWMPHandler(genieacsClient, tenantRepo, customerRepo, ontRepo, deps.Config.GenieACS.CWMPURL)
 	app.All("/cwmp", cwmpHandler.Handle)
 
 	// Payment gateway webhooks (per-tenant invoice & voucher; global subscription)

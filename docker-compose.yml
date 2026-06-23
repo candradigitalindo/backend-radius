@@ -118,6 +118,84 @@ services:
   # n8n — CS bot automation for tenants. Reachable internally by the WA service at
   # http://n8n:5678 (same default network); UI published on localhost only (access
   # via SSH tunnel: ssh -L 5678:localhost:5678 <server> → http://localhost:5678).
+  # --- GenieACS TR-069 (CWMP) stack ---------------------------------------
+  # ONT/CPE management. ONTs inform to https://app.dradius.net/cwmp -> nginx ->
+  # app:3000 /cwmp -> proxied to genieacs-cwmp. Backend manages devices via
+  # genieacs-nbi (REST). All internal-only (same default network); nothing
+  # published to the host except via the app.
+  acs_mongo:
+    image: mongo:4.4
+    container_name: radius_acs_mongo
+    restart: unless-stopped
+    volumes:
+      - acs_mongodata:/data/db
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "mongo", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  genieacs-cwmp:
+    build:
+      context: ./genieacs
+      dockerfile: Dockerfile
+    image: radius-genieacs:1.2.13
+    container_name: radius_genieacs_cwmp
+    restart: unless-stopped
+    command: ["genieacs-cwmp"]
+    environment:
+      - GENIEACS_MONGODB_CONNECTION_URL=mongodb://acs_mongo:27017/genieacs
+      - GENIEACS_CWMP_INTERFACE=0.0.0.0
+      - GENIEACS_CWMP_PORT=7547
+      - GENIEACS_EXT_DIR=/opt/genieacs/ext
+    depends_on:
+      acs_mongo:
+        condition: service_healthy
+    expose:
+      - "7547"
+    networks:
+      - default
+
+  genieacs-nbi:
+    image: radius-genieacs:1.2.13
+    container_name: radius_genieacs_nbi
+    restart: unless-stopped
+    command: ["genieacs-nbi"]
+    environment:
+      - GENIEACS_MONGODB_CONNECTION_URL=mongodb://acs_mongo:27017/genieacs
+      - GENIEACS_NBI_INTERFACE=0.0.0.0
+      - GENIEACS_NBI_PORT=7557
+      - GENIEACS_EXT_DIR=/opt/genieacs/ext
+    depends_on:
+      acs_mongo:
+        condition: service_healthy
+      genieacs-cwmp:
+        condition: service_started
+    expose:
+      - "7557"
+    networks:
+      - default
+
+  genieacs-fs:
+    image: radius-genieacs:1.2.13
+    container_name: radius_genieacs_fs
+    restart: unless-stopped
+    command: ["genieacs-fs"]
+    environment:
+      - GENIEACS_MONGODB_CONNECTION_URL=mongodb://acs_mongo:27017/genieacs
+      - GENIEACS_FS_INTERFACE=0.0.0.0
+      - GENIEACS_FS_PORT=7567
+      - GENIEACS_EXT_DIR=/opt/genieacs/ext
+    depends_on:
+      acs_mongo:
+        condition: service_healthy
+    expose:
+      - "7567"
+    networks:
+      - default
+
   n8n:
     image: n8nio/n8n:1.112.6
     container_name: radius_n8n
@@ -143,6 +221,7 @@ volumes:
   redisdata:
   storage:
   n8n_data:
+  acs_mongodata:
 
 # 'web' = network bersama reverse-proxy (proxy_nginx). Hanya nginx publik yang join.
 networks:

@@ -95,7 +95,8 @@ type StorageConfig struct {
 }
 
 type GenieACSConfig struct {
-	URL      string
+	URL      string // NBI (REST) base URL, e.g. http://genieacs-nbi:7557
+	CWMPURL  string // CWMP (TR-069) listener the /cwmp endpoint proxies to, e.g. http://genieacs-cwmp:7547
 	Username string
 	Password string
 }
@@ -175,6 +176,7 @@ func Load() (*Config, error) {
 		},
 		GenieACS: GenieACSConfig{
 			URL:      getEnv("GENIEACS_URL", "http://localhost:7557"),
+			CWMPURL:  getEnv("GENIEACS_CWMP_URL", "http://127.0.0.1:17547"),
 			Username: getEnv("GENIEACS_USERNAME", ""),
 			Password: getEnv("GENIEACS_PASSWORD", ""),
 		},
