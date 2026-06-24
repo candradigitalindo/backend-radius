@@ -355,11 +355,11 @@ func seedSystemData(ctx context.Context, db *pgxpool.Pool) error {
 	}{
 		{
 			"OTP Registrasi", "otp_registration",
-			"🔐 *Kode Verifikasi D Radius*\n\nHalo,\n\nKode verifikasi (OTP) untuk pendaftaran akun Anda adalah:\n\n*─────────────*\n*    {kode_otp}    *\n*─────────────*\n\nKode ini berlaku selama 5 menit. Jangan bagikan kode ini kepada siapapun.\n\nTerima kasih,\n_Tim Support D Radius_",
+			"🔐 *Kode Verifikasi D Radius*\n\nHalo,\n\nKode verifikasi (OTP) untuk pendaftaran akun Anda:\n\n*{kode_otp}*\n\n⏱ Berlaku selama 5 menit.\n⚠️ Jangan bagikan kode ini kepada siapapun.\n\nTerima kasih,\n_Tim Support D Radius_",
 		},
 		{
 			"OTP Reset Password", "otp_reset_password",
-			"🔐 *Kode OTP Reset Password*\n\nHalo *{nama}*,\n\nKami menerima permintaan reset password untuk akun *{nama_isp}* Anda.\n\n🔑 *Kode OTP Anda:*\n*─────────────*\n*    {kode_otp}    *\n*─────────────*\n\n⏱ Berlaku selama *{durasi}*\n⚠️ Jangan bagikan kode ini kepada siapapun.\n\nJika tidak merasa meminta reset password, abaikan pesan ini.\n\nTerima kasih,\n_Tim D Radius_",
+			"🔐 *Kode OTP Reset Password*\n\nHalo *{nama}*,\n\nKami menerima permintaan reset password untuk akun *{nama_isp}* Anda.\n\n🔑 Kode OTP Anda:\n\n*{kode_otp}*\n\n⏱ Berlaku selama *{durasi}*\n⚠️ Jangan bagikan kode ini kepada siapapun.\n\nJika tidak merasa meminta reset password, abaikan pesan ini.\n\nTerima kasih,\n_Tim D Radius_",
 		},
 		{
 			"Pendaftaran Berhasil (Welcome)", "welcome_tenant",

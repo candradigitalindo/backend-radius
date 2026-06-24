@@ -50,12 +50,10 @@ func (h *AuthHandler) otpTemplate(ctx context.Context) string {
 	defaultTpl := "🔐 *Kode OTP Reset Password - D Radius*\n\n" +
 		"Halo *{nama}*,\n\n" +
 		"Kami menerima permintaan reset password untuk akun *{nama_isp}* Anda.\n\n" +
-		"🔑 *Kode OTP Anda:*\n" +
-		"┌─────────────┐\n" +
-		"│  *{kode_otp}*  │\n" +
-		"└─────────────┘\n\n" +
+		"🔑 Kode OTP Anda:\n\n" +
+		"*{kode_otp}*\n\n" +
 		"⏱ Berlaku selama *{durasi}*\n" +
-		"⚠️ Jangan bagikan kode ini kepada siapapun\n\n" +
+		"⚠️ Jangan bagikan kode ini kepada siapapun.\n\n" +
 		"Jika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\n" +
 		"Terima kasih,\n" +
 		"_Tim D Radius_"

@@ -184,12 +184,10 @@ func (h *PortalHandler) otpTemplate(ctx context.Context) string {
 	defaultTpl := "🔐 *Kode OTP Reset Password - D Radius*\n\n" +
 		"Halo *{nama}*,\n\n" +
 		"Kami menerima permintaan reset password untuk akun pelanggan *{nama_isp}* Anda.\n\n" +
-		"🔑 *Kode OTP Anda:*\n" +
-		"┌─────────────┐\n" +
-		"│  *{kode_otp}*  │\n" +
-		"└─────────────┘\n\n" +
+		"🔑 Kode OTP Anda:\n\n" +
+		"*{kode_otp}*\n\n" +
 		"⏱ Berlaku selama *{durasi}*\n" +
-		"⚠️ Jangan bagikan kode ini kepada siapapun\n\n" +
+		"⚠️ Jangan bagikan kode ini kepada siapapun.\n\n" +
 		"Jika Anda tidak merasa meminta reset password, abaikan pesan ini.\n\n" +
 		"Terima kasih,\n" +
 		"_Tim D Radius_"
@@ -660,9 +658,9 @@ func (h *PortalHandler) RequestResetPIN(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Nomor WhatsApp belum terdaftar pada akun Anda. Hubungi admin untuk menambahkan nomor HP."})
 	}
 
-	if customer.Email == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Akun belum terhubung. Hubungi admin."})
-	}
+	// Email is optional: portal login only needs customer_code + password, and the
+	// OTP is delivered via WhatsApp. ISP customers often have no email, so do not
+	// gate password reset on it.
 
 	// Rate limit: check if a PIN was already sent recently
 	redisKey := fmt.Sprintf("portal_reset:%s:%s", tenant.ID, req.CustomerCode)
