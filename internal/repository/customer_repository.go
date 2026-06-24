@@ -489,9 +489,14 @@ func (r *customerRepository) FindByActiveSessionIP(ctx context.Context, ip strin
 }
 
 func (r *customerRepository) FindByCode(ctx context.Context, tenantID, customerCode string) (*model.Customer, error) {
-	query := `SELECT c.id, c.tenant_id, c.customer_code, c.name FROM customers c WHERE c.customer_code = $1 AND c.tenant_id = $2 LIMIT 1`
+	query := `SELECT c.id, c.tenant_id, c.customer_code, c.name,
+		COALESCE(c.phone, ''), COALESCE(c.email, ''), COALESCE(c.status, ''), COALESCE(c.password_hash, '')
+		FROM customers c WHERE c.customer_code = $1 AND c.tenant_id = $2 LIMIT 1`
 	var c model.Customer
-	err := r.db.QueryRow(ctx, query, customerCode, tenantID).Scan(&c.ID, &c.TenantID, &c.CustomerCode, &c.Name)
+	err := r.db.QueryRow(ctx, query, customerCode, tenantID).Scan(
+		&c.ID, &c.TenantID, &c.CustomerCode, &c.Name,
+		&c.Phone, &c.Email, &c.Status, &c.PasswordHash,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -541,6 +546,16 @@ func (r *customerRepository) UpdateODPPortID(ctx context.Context, customerID str
 }
 func (r *customerRepository) ClearODPPortID(ctx context.Context, odpPortID string) error { return nil }
 func (r *customerRepository) UpdatePasswordHash(ctx context.Context, tenantID, customerID, hash string) error {
+	ct, err := r.db.Exec(ctx,
+		`UPDATE customers SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3`,
+		hash, customerID, tenantID,
+	)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("customer not found")
+	}
 	return nil
 }
 
