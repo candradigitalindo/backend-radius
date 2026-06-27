@@ -198,6 +198,51 @@ type UserResponse struct {
 	Permissions   []string   `json:"permissions"`
 }
 
+// slugify converts a business name into a URL-safe slug (lowercase, hyphen-
+// separated, ascii alnum only) matching the tenant slug rules.
+func slugify(name string) string {
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastHyphen = false
+		case r == ' ' || r == '-' || r == '_' || r == '.':
+			if b.Len() > 0 && !lastHyphen {
+				b.WriteByte('-')
+				lastHyphen = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 50 {
+		out = strings.Trim(out[:50], "-")
+	}
+	return out
+}
+
+// uniqueTenantSlug derives a readable slug from name and ensures it is unused,
+// appending -2, -3, ... on collision. Falls back to a ULID if exhausted.
+func (s *AuthService) uniqueTenantSlug(ctx context.Context, name string) (string, error) {
+	base := slugify(name)
+	if base == "" {
+		base = "tenant"
+	}
+	candidate := base
+	for i := 2; i <= 1000; i++ {
+		existing, err := s.tenantRepo.FindBySlug(ctx, candidate)
+		if err != nil {
+			return "", err
+		}
+		if existing == nil {
+			return candidate, nil
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+	return id.New(), nil
+}
+
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthResponse, error) {
 	// Verify OTP
 	if input.OTP == "" {
@@ -244,9 +289,13 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 	status := "active"
 	if user.TenantID == "" {
 		if s.tenantService != nil {
+			slug, slugErr := s.uniqueTenantSlug(ctx, input.Name)
+			if slugErr != nil {
+				return nil, slugErr
+			}
 			tenant, err := s.tenantService.Create(ctx, CreateTenantInput{
 				Name:             input.Name,
-				Slug:             id.New(),
+				Slug:             slug,
 				Email:            input.Email,
 				Phone:            input.Phone,
 				Plan:             "", // Empty plan initially
@@ -261,9 +310,13 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 			user.Role = "owner"
 			status = tenant.Status
 		} else {
+			slug, slugErr := s.uniqueTenantSlug(ctx, input.Name)
+			if slugErr != nil {
+				return nil, slugErr
+			}
 			tenant := &model.Tenant{
 				Name:         input.Name,
-				Slug:         id.New(),
+				Slug:         slug,
 				Email:        input.Email,
 				Timezone:     "Asia/Jakarta",
 				Currency:     "IDR",
