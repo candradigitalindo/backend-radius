@@ -342,7 +342,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	auth.Post("/logout", authHandler.Logout)
 
 	// Portal routes (customer web portal)
-	portal := v1.Group("/portal", authMiddleware.Handle(), middleware.TenantGuard())
+	portal := v1.Group("/portal", authMiddleware.Handle(), middleware.TenantGuard(), middleware.RoleGuard("customer"))
 	portal.Get("/profile", portalHandler.GetProfile)
 	portal.Get("/customer", portalHandler.GetCustomer)
 	portal.Get("/invoices", portalHandler.ListInvoices)
@@ -369,21 +369,23 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Protected routes (staff only)
 	protected := v1.Group("/", authMiddleware.Handle(), middleware.TenantGuard(), middleware.StaffGuard(), middleware.NewPermissionLoader(roleRepo), middleware.SubscriptionGuard(tenantRepo))
 
-	// Billing Profile routes
-	billingProfiles := protected.Group("/billing-profiles")
+	// Billing Profile routes (managed from the Tenant profile page)
+	billingProfiles := protected.Group("/billing-profiles", middleware.PermissionGuard("tenant.view"))
 	billingProfiles.Get("/", billingProfileHandler.List)
-	billingProfiles.Post("/", billingProfileHandler.Create)
+	billingProfiles.Post("/", middleware.PermissionGuard("tenant.edit"), billingProfileHandler.Create)
 	billingProfiles.Get("/:id", billingProfileHandler.GetByID)
-	billingProfiles.Put("/:id", billingProfileHandler.Update)
-	billingProfiles.Delete("/:id", billingProfileHandler.Delete)
-	billingProfiles.Put("/:id/default", billingProfileHandler.SetDefault)
+	billingProfiles.Put("/:id", middleware.PermissionGuard("tenant.edit"), billingProfileHandler.Update)
+	billingProfiles.Delete("/:id", middleware.PermissionGuard("tenant.edit"), billingProfileHandler.Delete)
+	billingProfiles.Put("/:id/default", middleware.PermissionGuard("tenant.edit"), billingProfileHandler.SetDefault)
 
 	// Current tenant routes
+	// GET /tenant stays unguarded: the isolation/subscription pages need basic
+	// tenant info for every staff role (see SubscriptionGuard whitelist).
 	protected.Get("/tenant", tenantHandler.GetCurrent)
-	protected.Put("/tenant", tenantHandler.Update)
-	protected.Put("/tenant/settings", tenantHandler.UpdateSettings)
-	protected.Post("/tenant/settings/test", tenantHandler.TestPGConnection)
-	protected.Get("/tenant/webhook-urls", tenantHandler.GetWebhookURLs)
+	protected.Put("/tenant", middleware.PermissionGuard("tenant.edit"), tenantHandler.Update)
+	protected.Put("/tenant/settings", middleware.PermissionGuard("tenant.edit"), tenantHandler.UpdateSettings)
+	protected.Post("/tenant/settings/test", middleware.PermissionGuard("tenant.edit"), tenantHandler.TestPGConnection)
+	protected.Get("/tenant/webhook-urls", middleware.PermissionGuard("tenant.view"), tenantHandler.GetWebhookURLs)
 
 	// Tenant subscription routes
 	subscription := protected.Group("/subscription")
@@ -716,7 +718,9 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	rewards.Put("/:id", middleware.PermissionGuard("rewards.edit"), rewardHandler.UpdateReward)
 	rewards.Delete("/:id", middleware.PermissionGuard("rewards.delete"), rewardHandler.DeleteReward)
 
-	referrals := protected.Group("/referrals", middleware.PermissionGuard("rewards.view"))
+	// Referral list is reachable from both the Reward dashboard (rewards.view)
+	// and the Reseller & Referral menu (resellers.view) — either permission passes.
+	referrals := protected.Group("/referrals", middleware.PermissionGuard("rewards.view", "resellers.view"))
 	referrals.Get("/", rewardHandler.ListReferrals)
 	referrals.Get("/:id", rewardHandler.GetReferral)
 	referrals.Post("/:id/reward", middleware.PermissionGuard("rewards.edit"), rewardHandler.MarkRewarded)
