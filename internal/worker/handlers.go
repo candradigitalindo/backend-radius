@@ -17,25 +17,38 @@ import (
 )
 
 type Handlers struct {
-	DB                  *pgxpool.Pool
-	InvoiceService      *service.InvoiceService
-	CustomerService     *service.CustomerService
-	ReminderService     *service.ReminderService
-	TenantRepo          repository.TenantRepository
-	InvoiceRepo         repository.InvoiceRepository
-	ReminderRepo        repository.ReminderRepository
-	RouterRepo          repository.RouterRepository
-	SessionRepo         repository.SessionRepository
-	IPAMRepo            repository.IPAMRepository
-	SettingRepo         repository.SettingRepository
-	RouterService       *service.RouterService
-	SNMPService         *service.SNMPService
-	RewardService       *service.RewardService
-	WAClient            *whatsapp.Client
-	GenieACSService     *service.GenieACSService
+	DB              *pgxpool.Pool
+	InvoiceService  *service.InvoiceService
+	CustomerService *service.CustomerService
+	ReminderService *service.ReminderService
+	TenantRepo      repository.TenantRepository
+	InvoiceRepo     repository.InvoiceRepository
+	ReminderRepo    repository.ReminderRepository
+	RouterRepo      repository.RouterRepository
+	SessionRepo     repository.SessionRepository
+	IPAMRepo        repository.IPAMRepository
+	SettingRepo     repository.SettingRepository
+	RouterService   *service.RouterService
+	SNMPService     *service.SNMPService
+	RewardService   *service.RewardService
+	WAClient        *whatsapp.Client
+	GenieACSService *service.GenieACSService
+	// GenieACSEnabled is true when the env-driven GenieACS config (GENIEACS_URL)
+	// is set. The per-tenant "genieacs_url" setting is only a legacy fallback.
+	GenieACSEnabled     bool
 	ONTRepo             repository.ONTRepository
 	SubscriptionRepo    repository.SubscriptionRepository
 	NotificationService *service.NotificationService
+}
+
+// genieACSReady reports whether the ONT workers should run: GenieACS is either
+// configured globally via env, or at least one tenant has the legacy setting.
+func (h *Handlers) genieACSReady(ctx context.Context) bool {
+	if h.GenieACSEnabled {
+		return true
+	}
+	ok, _ := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url")
+	return ok
 }
 
 // saTenantID returns the superadmin's tenant ID by looking up slug="superadmin".
@@ -473,7 +486,7 @@ func (h *Handlers) HandleONTProvisionRetry(ctx context.Context, t *asynq.Task) e
 	if h.GenieACSService == nil || h.ONTRepo == nil || h.SettingRepo == nil {
 		return nil
 	}
-	if ok, _ := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url"); !ok {
+	if !h.genieACSReady(ctx) {
 		return nil
 	}
 
@@ -510,9 +523,8 @@ func (h *Handlers) HandleONTDiscover(ctx context.Context, t *asynq.Task) error {
 		return nil
 	}
 
-	// Skip jika tidak ada tenant yang mengkonfigurasi GenieACS — hindari error berulang.
-	hasGenie, err := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url")
-	if err != nil || !hasGenie {
+	// Skip jika GenieACS tidak dikonfigurasi — hindari error berulang.
+	if !h.genieACSReady(ctx) {
 		return nil
 	}
 
@@ -564,7 +576,7 @@ func (h *Handlers) HandleONTAutoMatch(ctx context.Context, t *asynq.Task) error 
 	if h.GenieACSService == nil || h.ONTRepo == nil || h.SettingRepo == nil {
 		return nil
 	}
-	if ok, _ := h.SettingRepo.ExistsWithValue(ctx, "genieacs_url"); !ok {
+	if !h.genieACSReady(ctx) {
 		return nil
 	}
 

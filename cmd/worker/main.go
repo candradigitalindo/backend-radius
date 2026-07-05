@@ -102,6 +102,7 @@ func main() {
 		RewardService:       rewardService,
 		WAClient:            waClient,
 		GenieACSService:     genieacsService,
+		GenieACSEnabled:     os.Getenv("GENIEACS_URL") != "",
 		ONTRepo:             ontRepo,
 		SubscriptionRepo:    subscriptionRepo,
 		NotificationService: notificationService,
