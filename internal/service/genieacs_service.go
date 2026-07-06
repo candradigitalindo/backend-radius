@@ -271,8 +271,12 @@ func (s *GenieACSService) ProvisionONT(ctx context.Context, tenantID, ontID stri
 		return fmt.Errorf("genieacs tag: %w", err)
 	}
 
-	// Push PPPoE credentials to WAN interface if customer is linked
-	if ont.Customer != nil && ont.Customer.PPPoEUsername != "" {
+	// Push PPPoE credentials to WAN interface if customer is linked — TAPI hanya
+	// untuk perangkat yang belum punya PPPoE username terkonfigurasi. Perangkat
+	// pelanggan aktif sudah punya PPPoE yang jalan (justru itu yang dipakai untuk
+	// auto-match); menimpanya ke instance .1 yang salah (F460 aktif di .2) bisa
+	// memutus internet mereka — pola kegagalan yang sama seperti overwrite WiFi.
+	if ont.Customer != nil && ont.Customer.PPPoEUsername != "" && findPPPoEUsername(device) == "" {
 		params := []genieacs.TaskParam{
 			{
 				Name:  "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
@@ -1262,18 +1266,22 @@ type AutoMatchResult struct {
 // Index WANDevice (1–4) dan WANConnectionDevice (1–4) dicoba semua kombinasi
 // karena nilainya bervariasi antar-perangkat/konfigurasi ISP.
 func findPPPoEUsername(device *genieacs.Device) string {
+	// Instance WANPPPConnection bisa .1, .2, ... — ZTE F460 misalnya memakai .2.
+	// Karena itu instance PPP juga harus di-loop, bukan di-hardcode .1.
 	for wanIdx := 1; wanIdx <= 4; wanIdx++ {
 		for connIdx := 1; connIdx <= 4; connIdx++ {
-			path := fmt.Sprintf(
-				"InternetGatewayDevice.WANDevice.%d.WANConnectionDevice.%d.WANPPPConnection.1.Username",
-				wanIdx, connIdx,
-			)
-			val := device.GetNestedValue(path)
-			if val == nil {
-				continue
-			}
-			if s, ok := val.(string); ok && s != "" {
-				return s
+			for pppIdx := 1; pppIdx <= 4; pppIdx++ {
+				path := fmt.Sprintf(
+					"InternetGatewayDevice.WANDevice.%d.WANConnectionDevice.%d.WANPPPConnection.%d.Username",
+					wanIdx, connIdx, pppIdx,
+				)
+				val := device.GetNestedValue(path)
+				if val == nil {
+					continue
+				}
+				if s, ok := val.(string); ok && s != "" {
+					return s
+				}
 			}
 		}
 	}
@@ -1286,16 +1294,19 @@ func findExternalIP(device *genieacs.Device) string {
 	for wanIdx := 1; wanIdx <= 4; wanIdx++ {
 		for connIdx := 1; connIdx <= 4; connIdx++ {
 			for _, connType := range []string{"WANPPPConnection", "WANIPConnection"} {
-				path := fmt.Sprintf(
-					"InternetGatewayDevice.WANDevice.%d.WANConnectionDevice.%d.%s.1.ExternalIPAddress",
-					wanIdx, connIdx, connType,
-				)
-				val := device.GetNestedValue(path)
-				if val == nil {
-					continue
-				}
-				if ip, ok := val.(string); ok && ip != "" && ip != "0.0.0.0" {
-					return ip
+				// Instance koneksi bisa .1, .2, ... (F460 pakai .2) — loop, jangan hardcode.
+				for cIdx := 1; cIdx <= 4; cIdx++ {
+					path := fmt.Sprintf(
+						"InternetGatewayDevice.WANDevice.%d.WANConnectionDevice.%d.%s.%d.ExternalIPAddress",
+						wanIdx, connIdx, connType, cIdx,
+					)
+					val := device.GetNestedValue(path)
+					if val == nil {
+						continue
+					}
+					if ip, ok := val.(string); ok && ip != "" && ip != "0.0.0.0" {
+						return ip
+					}
 				}
 			}
 		}
@@ -1338,12 +1349,17 @@ func (s *GenieACSService) AutoMatchONTs(ctx context.Context, _ string) (*AutoMat
 		// Jika Username belum ter-cache di GenieACS, kirim task refresh (non-blocking).
 		// Pada run AutoMatch berikutnya (~5 menit) parameter sudah tersedia.
 		if pppoeUsername == "" {
-			refreshPaths := make([]string, 0, 8)
+			// Refresh Username di semua instance WANPPPConnection (.1 dan .2) — F460
+			// menaruh koneksi aktif di .2, jadi hanya me-refresh .1 tak pernah mengisi
+			// username perangkat ZTE.
+			refreshPaths := make([]string, 0, 16)
 			for wanIdx := 1; wanIdx <= 2; wanIdx++ {
 				for connIdx := 1; connIdx <= 2; connIdx++ {
-					refreshPaths = append(refreshPaths,
-						fmt.Sprintf("InternetGatewayDevice.WANDevice.%d.WANConnectionDevice.%d.WANPPPConnection.1.Username", wanIdx, connIdx),
-					)
+					for pppIdx := 1; pppIdx <= 2; pppIdx++ {
+						refreshPaths = append(refreshPaths,
+							fmt.Sprintf("InternetGatewayDevice.WANDevice.%d.WANConnectionDevice.%d.WANPPPConnection.%d.Username", wanIdx, connIdx, pppIdx),
+						)
+					}
 				}
 			}
 			// timeout=0: task di-queue, tidak menunggu respon ONT
