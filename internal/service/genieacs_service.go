@@ -295,12 +295,41 @@ func (s *GenieACSService) ProvisionONT(ctx context.Context, tenantID, ontID stri
 		}
 	}
 
-	// Auto-set WiFi SSID/password from customer data (if not already configured)
+	// Auto-set WiFi SSID/password dari data pelanggan — HANYA untuk perangkat yang
+	// benar-benar belum pernah dikonfigurasi (SSID kosong DI PERANGKAT). Menimpa SSID
+	// yang sudah dipersonalisasi pelanggan = kredensial WiFi pelanggan hilang.
+	//
+	// PENTING: jangan percaya nilai SSID dari cache GenieACS begitu saja. Saat
+	// fast-provision berjalan tepat setelah discovery, parameter WLAN sering BELUM
+	// ter-cache (Inform awal tak memuat SSID) sehingga cache mengembalikan "" padahal
+	// perangkat sebenarnya punya SSID → dulu ini menyebabkan overwrite. Karena itu kita
+	// paksa GenieACS membaca SSID real dari perangkat (blocking) dulu, dan hanya
+	// menetapkan default bila perangkat MENJAWAB dan SSID-nya memang kosong.
+	const ssidPath = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID"
 	defaultSSID, defaultPass := s.buildDefaultWiFi(ont)
+	autoWiFiApplied := false
 	if defaultSSID != "" {
-		if _, werr := s.client.SetParameterValues(ctx, device.ID, buildWiFiParams(defaultSSID, defaultPass, "11i")); werr == nil {
-			updateLastKnownWiFiFromSetRequest(ont, defaultSSID, defaultPass, "11i")
+		responded := s.client.RefreshSpecificParams(ctx, device.ID, []string{ssidPath}, 8000)
+		if responded {
+			// Perangkat menjawab — ambil ulang nilai SSID terkini dari GenieACS.
+			if fresh, ferr := s.client.GetDevice(ctx, device.ID); ferr == nil && fresh != nil {
+				device = fresh
+			}
+			currentSSID := genieStrVal(device.GetNestedValue(ssidPath))
+			if currentSSID == "" {
+				// Perangkat benar-benar polos → aman menetapkan default.
+				if _, werr := s.client.SetParameterValues(ctx, device.ID, buildWiFiParams(defaultSSID, defaultPass, "11i")); werr == nil {
+					updateLastKnownWiFiFromSetRequest(ont, defaultSSID, defaultPass, "11i")
+					autoWiFiApplied = true
+				}
+			} else {
+				// SSID sudah ada di perangkat — jangan sentuh, rekam sebagai last-known.
+				updateLastKnownWiFiFromSetRequest(ont, currentSSID, "", "")
+				setOptionalString(&ont.LastKnownWiFiSource, "device_actual")
+			}
 		}
+		// responded == false → perangkat offline / tak menjawab. Kita TIDAK bisa
+		// memastikan SSID kosong, jadi JANGAN menyentuh WiFi sama sekali (fail-safe).
 	}
 
 	// Refresh all device data from TR-069
@@ -315,8 +344,9 @@ func (s *GenieACSService) ProvisionONT(ctx context.Context, tenantID, ontID stri
 		return fmt.Errorf("genieacs provision save: %w", err)
 	}
 
-	// Notify customer via WA with WiFi credentials
-	if defaultSSID != "" && ont.Customer != nil {
+	// Notify customer via WA with WiFi credentials — hanya jika kita memang baru
+	// menetapkan WiFi baru, bukan saat SSID lama dipertahankan.
+	if autoWiFiApplied && ont.Customer != nil {
 		go s.sendWiFiCredentialsWA(context.Background(), ont.TenantID, ont.Customer, defaultSSID, defaultPass)
 	}
 
@@ -378,7 +408,11 @@ func (s *GenieACSService) DeprovisionONT(ctx context.Context, tenantID, ontID st
 	_ = s.client.RemoveTag(ctx, device.ID, "tenant:"+tenantID)
 	// Reset WiFi to a blank/random state so old credentials are gone
 	newPass := "changeme" // placeholder — customer will set via portal
-	_ = s.SetWiFiSSID(ctx, tenantID, ontID, ont.SerialNumber[:8], newPass, "11i")
+	newSSID := ont.SerialNumber
+	if len(newSSID) > 8 {
+		newSSID = newSSID[:8] // slicing a shorter serial would panic
+	}
+	_ = s.SetWiFiSSID(ctx, tenantID, ontID, newSSID, newPass, "11i")
 	// Clear cached WiFi in DB
 	ont.LastKnownWiFiSSID = nil
 	ont.LastKnownWiFiPassword = nil
@@ -487,11 +521,6 @@ func (s *GenieACSService) getOwnedONTBySerial(ctx context.Context, tenantID, ser
 		return nil, ErrONTNotFound
 	}
 	return ont, nil
-}
-
-func (s *GenieACSService) validateSerialOwnership(ctx context.Context, tenantID, serial string) error {
-	_, err := s.getOwnedONTBySerial(ctx, tenantID, serial)
-	return err
 }
 
 // GetDeviceBySerial retrieves a device from GenieACS by serial number.
