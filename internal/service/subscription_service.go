@@ -351,13 +351,20 @@ func (s *SubscriptionService) AdminUpdateOrder(ctx context.Context, orderID stri
 		plan, err := s.subRepo.FindPlanByID(ctx, order.PlanID)
 		if err == nil && plan != nil {
 			now := time.Now()
-			startsAt := now
-			expiresAt := startsAt.AddDate(0, order.DurationMonths, 0)
-			if order.StartsAt != nil {
+			var startsAt, expiresAt time.Time
+			if order.StartsAt != nil && order.ExpiresAt != nil {
+				// Explicit dates provided — respect them.
 				startsAt = *order.StartsAt
-			}
-			if order.ExpiresAt != nil {
 				expiresAt = *order.ExpiresAt
+			} else {
+				// Extend from the current expiry so marking an order paid never
+				// shortens an already-active subscription (mirrors ConfirmPayment).
+				startsAt = now
+				if tenant, terr := s.tenantRepo.FindByID(ctx, order.TenantID); terr == nil &&
+					tenant != nil && tenant.PlanExpiresAt != nil && tenant.PlanExpiresAt.After(now) {
+					startsAt = *tenant.PlanExpiresAt
+				}
+				expiresAt = startsAt.AddDate(0, order.DurationMonths, 0)
 			}
 			_ = s.activatePlan(ctx, order.TenantID, plan, &startsAt, &expiresAt)
 		}
@@ -376,12 +383,17 @@ func (s *SubscriptionService) AdminCreateOrder(ctx context.Context, tenantID, pl
 	}
 
 	now := time.Now()
+	// Yearly (12-month) orders get the same 20% discount as the self-service path.
+	amount := plan.Price * int64(durationMonths)
+	if durationMonths == 12 {
+		amount = amount * 80 / 100
+	}
 	order := &model.SubscriptionOrder{
 		ID:             id.New(),
 		TenantID:       tenantID,
 		PlanID:         planID,
 		PlanName:       plan.Name,
-		Amount:         plan.Price * int64(durationMonths),
+		Amount:         amount,
 		DurationMonths: durationMonths,
 		Status:         "pending",
 		CreatedAt:      now,
@@ -594,7 +606,7 @@ func (s *SubscriptionService) ProcessSubTripayWebhook(ctx context.Context, rawBo
 
 	order, err := s.subRepo.FindOrderByPaymentRef(ctx, payload.Reference)
 	if err != nil {
-		return err
+		return retryable(err)
 	}
 	if order == nil {
 		return fmt.Errorf("subscription order not found for ref=%s", payload.Reference)
@@ -604,7 +616,7 @@ func (s *SubscriptionService) ProcessSubTripayWebhook(ctx context.Context, rawBo
 	}
 
 	_, err = s.ConfirmPayment(ctx, order.ID, payload.PaymentMethod, payload.Reference)
-	return err
+	return retryable(err)
 }
 
 // ProcessSubMidtransWebhook handles Midtrans notification for subscription orders.
@@ -626,7 +638,7 @@ func (s *SubscriptionService) ProcessSubMidtransWebhook(ctx context.Context, n p
 
 	order, err := s.subRepo.FindOrderByPaymentRef(ctx, n.OrderID)
 	if err != nil {
-		return err
+		return retryable(err)
 	}
 	if order == nil {
 		return fmt.Errorf("subscription order not found for ref=%s", n.OrderID)
@@ -636,7 +648,7 @@ func (s *SubscriptionService) ProcessSubMidtransWebhook(ctx context.Context, n p
 	}
 
 	_, err = s.ConfirmPayment(ctx, order.ID, n.PaymentType, n.TransactionID)
-	return err
+	return retryable(err)
 }
 
 // ProcessSubXenditWebhook handles Xendit Invoice callback for subscription orders.
@@ -659,7 +671,7 @@ func (s *SubscriptionService) ProcessSubXenditWebhook(ctx context.Context, callb
 
 	order, err := s.subRepo.FindOrderByPaymentRef(ctx, payload.ExternalID)
 	if err != nil {
-		return err
+		return retryable(err)
 	}
 	if order == nil {
 		return fmt.Errorf("subscription order not found for external_id=%s", payload.ExternalID)
@@ -674,7 +686,7 @@ func (s *SubscriptionService) ProcessSubXenditWebhook(ctx context.Context, callb
 	}
 
 	_, err = s.ConfirmPayment(ctx, order.ID, method, payload.ID)
-	return err
+	return retryable(err)
 }
 
 func (s *SubscriptionService) sendPaymentConfirmationWA(order *model.SubscriptionOrder, plan *model.SubscriptionPlan, expiresAt *time.Time) {

@@ -60,31 +60,15 @@ func (s *RewardService) GetReferral(ctx context.Context, tenantID, referralID st
 	return s.rewardRepo.GetReferral(ctx, tenantID, referralID)
 }
 
-func (s *RewardService) GetReferralByCode(ctx context.Context, tenantID, code string) (*model.Referral, error) {
-	return s.rewardRepo.GetReferralByCode(ctx, tenantID, code)
-}
-
 func (s *RewardService) ListReferrals(ctx context.Context, tenantID string, filter repository.ReferralFilter) ([]model.Referral, int, error) {
 	return s.rewardRepo.ListReferrals(ctx, tenantID, filter)
-}
-
-func (s *RewardService) UpdateReferralStatus(ctx context.Context, tenantID, referralID, status string) error {
-	return s.rewardRepo.UpdateReferralStatus(ctx, tenantID, referralID, status)
 }
 
 func (s *RewardService) MarkRewarded(ctx context.Context, tenantID, referralID string) error {
 	return s.rewardRepo.MarkRewarded(ctx, tenantID, referralID)
 }
 
-func (s *RewardService) GetCustomerReferralCode(ctx context.Context, tenantID, customerID string) (string, error) {
-	return s.rewardRepo.GetCustomerReferralCode(ctx, tenantID, customerID)
-}
-
 // Claims
-
-func (s *RewardService) CreateClaim(ctx context.Context, claim *model.RewardClaim) error {
-	return s.rewardRepo.CreateClaim(ctx, claim)
-}
 
 func (s *RewardService) ListClaims(ctx context.Context, tenantID string, filter repository.ClaimFilter) ([]model.RewardClaim, int, error) {
 	return s.rewardRepo.ListClaims(ctx, tenantID, filter)

@@ -652,22 +652,3 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	return &resp, nil
 }
 
-// ResetPasswordDirect resets a user's password without requiring the current password.
-// Used for PIN-verified password resets from the customer portal.
-func (s *AuthService) ResetPasswordDirect(ctx context.Context, tenantID, email, newPassword string) error {
-	user, err := s.userRepo.FindByEmail(ctx, tenantID, email)
-	if err != nil {
-		return err
-	}
-	if user == nil {
-		return ErrUserNotFound
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-
-	user.PasswordHash = string(hash)
-	return s.userRepo.Update(ctx, user)
-}

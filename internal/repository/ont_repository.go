@@ -522,9 +522,12 @@ func (r *ontRepository) FindUnlinkedGlobal(ctx context.Context) ([]model.ONT, er
 // Does NOT use tenant_id in the WHERE clause — safe even when the ONT was discovered under a
 // different tenant (which can happen when discovery races across tenants).
 func (r *ontRepository) LinkToCustomer(ctx context.Context, ontID, customerID, tenantID string) error {
+	// Clear provisioned_at so the newly-linked customer's PPPoE/WiFi actually get
+	// pushed. Without this, an ONT reused from a previous customer keeps the old
+	// provisioned_at and FindUnprovisioned skips it forever.
 	query := `
 		UPDATE onts
-		SET customer_id = $1, tenant_id = $2, status = 'active', updated_at = NOW()
+		SET customer_id = $1, tenant_id = $2, status = 'active', provisioned_at = NULL, updated_at = NOW()
 		WHERE id = $3
 	`
 	_, err := r.db.Exec(ctx, query, customerID, tenantID, ontID)

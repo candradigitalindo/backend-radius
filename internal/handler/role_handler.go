@@ -41,6 +41,8 @@ type createRoleRequest struct {
 
 func (h *RoleHandler) Create(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
+	actorRole, _ := c.Locals("role").(string)
+	actorPerms, _ := c.Locals("permissions").([]string)
 
 	var req createRoleRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -52,15 +54,20 @@ func (h *RoleHandler) Create(c *fiber.Ctx) error {
 	}
 
 	role, err := h.roleService.Create(c.Context(), service.CreateRoleInput{
-		TenantID:    tenantID,
-		Name:        req.Name,
-		Slug:        req.Slug,
-		Description: req.Description,
-		Permissions: req.Permissions,
+		TenantID:         tenantID,
+		Name:             req.Name,
+		Slug:             req.Slug,
+		Description:      req.Description,
+		Permissions:      req.Permissions,
+		ActorRole:        actorRole,
+		ActorPermissions: actorPerms,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrRoleSlugExists) || errors.Is(err, service.ErrInvalidSlug) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrCannotGrantUnheld) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat role"})
 	}
@@ -76,6 +83,8 @@ type updateRoleRequest struct {
 
 func (h *RoleHandler) Update(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
+	actorRole, _ := c.Locals("role").(string)
+	actorPerms, _ := c.Locals("permissions").([]string)
 	roleID := c.Params("id")
 
 	var req updateRoleRequest
@@ -88,17 +97,19 @@ func (h *RoleHandler) Update(c *fiber.Ctx) error {
 	}
 
 	role, err := h.roleService.Update(c.Context(), service.UpdateRoleInput{
-		TenantID:    tenantID,
-		RoleID:      roleID,
-		Name:        req.Name,
-		Description: req.Description,
-		Permissions: req.Permissions,
+		TenantID:         tenantID,
+		RoleID:           roleID,
+		Name:             req.Name,
+		Description:      req.Description,
+		Permissions:      req.Permissions,
+		ActorRole:        actorRole,
+		ActorPermissions: actorPerms,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrRoleNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 		}
-		if errors.Is(err, service.ErrCannotEditOwnerRole) {
+		if errors.Is(err, service.ErrCannotEditOwnerRole) || errors.Is(err, service.ErrCannotGrantUnheld) {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui role"})

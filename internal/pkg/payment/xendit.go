@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -202,14 +200,6 @@ func (c *XenditClient) VerifyWebhookToken(callbackToken string) bool {
 	}
 	// Use HMAC comparison to prevent timing attacks even though it's a simple string match
 	return hmac.Equal([]byte(c.webhookToken), []byte(callbackToken))
-}
-
-// GenerateWebhookSignature generates HMAC-SHA256 signature for testing purposes.
-// In production, Xendit uses the callback token approach, not HMAC signatures on the body.
-func GenerateWebhookSignature(webhookToken string, payload []byte) string {
-	mac := hmac.New(sha256.New, []byte(webhookToken))
-	mac.Write(payload)
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // IsXenditPaymentSuccess returns true if the callback status indicates successful payment.

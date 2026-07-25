@@ -407,22 +407,36 @@ func (c *Client) GetParameterValue(ctx context.Context, deviceID, paramName stri
 	return nil, nil
 }
 
+// escapeTagSegment meng-encode tag untuk dipakai sebagai segmen path NBI.
+// url.PathEscape tidak meng-encode ":" (sub-delimiter yang sah di path), padahal
+// GenieACS menolak tag ber-":" mentah dengan 404. Tag kita berformat "tenant:<id>",
+// jadi ":" harus jadi %3A agar tag benar-benar tersimpan.
+func escapeTagSegment(tag string) string {
+	return strings.ReplaceAll(url.PathEscape(tag), ":", "%3A")
+}
+
 func (c *Client) AddTag(ctx context.Context, deviceID, tag string) error {
-	path := fmt.Sprintf("/devices/%s/tags/%s", url.PathEscape(deviceID), url.PathEscape(tag))
+	path := fmt.Sprintf("/devices/%s/tags/%s", url.PathEscape(deviceID), escapeTagSegment(tag))
 	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("genieacs: add tag %q ke device %q gagal (HTTP %d)", tag, deviceID, resp.StatusCode)
+	}
 	return nil
 }
 
 func (c *Client) RemoveTag(ctx context.Context, deviceID, tag string) error {
-	path := fmt.Sprintf("/devices/%s/tags/%s", url.PathEscape(deviceID), url.PathEscape(tag))
+	path := fmt.Sprintf("/devices/%s/tags/%s", url.PathEscape(deviceID), escapeTagSegment(tag))
 	resp, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("genieacs: remove tag %q dari device %q gagal (HTTP %d)", tag, deviceID, resp.StatusCode)
+	}
 	return nil
 }

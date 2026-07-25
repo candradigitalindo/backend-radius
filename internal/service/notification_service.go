@@ -94,21 +94,6 @@ func (s *NotificationService) MarkRead(ctx context.Context, tenantID, notifID st
 	return s.notifRepo.MarkRead(ctx, tenantID, notifID)
 }
 
-// MarkReadByCustomer marks a notification as read with customer ownership validation.
-func (s *NotificationService) MarkReadByCustomer(ctx context.Context, tenantID, notifID, customerID string) error {
-	return s.notifRepo.MarkReadByCustomer(ctx, tenantID, notifID, customerID)
-}
-
-// MarkAllRead marks all notifications for a customer as read.
-func (s *NotificationService) MarkAllRead(ctx context.Context, tenantID, customerID string) error {
-	return s.notifRepo.MarkAllRead(ctx, tenantID, customerID)
-}
-
-// UnreadCount returns the count of unread notifications.
-func (s *NotificationService) UnreadCount(ctx context.Context, tenantID, customerID string) (int, error) {
-	return s.notifRepo.UnreadCount(ctx, tenantID, customerID)
-}
-
 // PushAndStore stores an in-app notification and sends a web-push (FCM) to the
 // customer's registered devices. It deliberately does NOT send WhatsApp — use it
 // for events that already deliver their own WA message (invoice created, payment,

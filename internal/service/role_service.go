@@ -17,7 +17,27 @@ var (
 	ErrRoleSlugExists         = errors.New("slug role sudah digunakan")
 	ErrRoleInUse              = errors.New("role masih digunakan oleh pengguna")
 	ErrInvalidSlug            = errors.New("slug hanya boleh huruf kecil, angka, dan strip")
+	ErrCannotGrantUnheld      = errors.New("tidak dapat memberikan permission yang tidak Anda miliki")
 )
+
+// actorMayGrant ensures a non-owner cannot grant permissions they do not
+// themselves hold — otherwise anyone with roles.edit could self-escalate to
+// full control. Owner and superadmin may grant anything.
+func actorMayGrant(actorRole string, actorPerms, requested []string) error {
+	if actorRole == "owner" || actorRole == "superadmin" {
+		return nil
+	}
+	held := make(map[string]struct{}, len(actorPerms))
+	for _, p := range actorPerms {
+		held[p] = struct{}{}
+	}
+	for _, p := range requested {
+		if _, ok := held[p]; !ok {
+			return ErrCannotGrantUnheld
+		}
+	}
+	return nil
+}
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$`)
 
@@ -37,32 +57,14 @@ func (s *RoleService) List(ctx context.Context, tenantID string) ([]*model.Role,
 	return s.roleRepo.List(ctx, tenantID)
 }
 
-func (s *RoleService) GetPermissions(ctx context.Context, tenantID, slug string) ([]string, error) {
-	if err := s.EnsureDefaults(ctx, tenantID); err != nil {
-		return nil, err
-	}
-
-	// Owner always gets all permissions
-	if slug == "owner" {
-		return model.AllPermissionKeys(), nil
-	}
-
-	role, err := s.roleRepo.FindBySlug(ctx, tenantID, slug)
-	if err != nil {
-		return nil, err
-	}
-	if role == nil {
-		return []string{}, nil
-	}
-	return role.Permissions, nil
-}
-
 type CreateRoleInput struct {
 	TenantID    string
 	Name        string
 	Slug        string
 	Description string
 	Permissions []string
+	ActorRole        string   // role slug of the user performing this action
+	ActorPermissions []string // permissions the actor currently holds
 }
 
 func (s *RoleService) Create(ctx context.Context, input CreateRoleInput) (*model.Role, error) {
@@ -80,6 +82,9 @@ func (s *RoleService) Create(ctx context.Context, input CreateRoleInput) (*model
 	}
 
 	perms := filterValidPermissions(input.Permissions)
+	if err := actorMayGrant(input.ActorRole, input.ActorPermissions, perms); err != nil {
+		return nil, err
+	}
 
 	role := &model.Role{
 		TenantID:    input.TenantID,
@@ -102,6 +107,8 @@ type UpdateRoleInput struct {
 	Name        string
 	Description string
 	Permissions []string
+	ActorRole        string   // role slug of the user performing this action
+	ActorPermissions []string // permissions the actor currently holds
 }
 
 func (s *RoleService) Update(ctx context.Context, input UpdateRoleInput) (*model.Role, error) {
@@ -118,9 +125,14 @@ func (s *RoleService) Update(ctx context.Context, input UpdateRoleInput) (*model
 		return nil, ErrCannotEditOwnerRole
 	}
 
+	perms := filterValidPermissions(input.Permissions)
+	if err := actorMayGrant(input.ActorRole, input.ActorPermissions, perms); err != nil {
+		return nil, err
+	}
+
 	role.Name = input.Name
 	role.Description = input.Description
-	role.Permissions = filterValidPermissions(input.Permissions)
+	role.Permissions = perms
 
 	if err := s.roleRepo.Update(ctx, role); err != nil {
 		return nil, err
@@ -149,14 +161,6 @@ func (s *RoleService) Delete(ctx context.Context, tenantID, roleID string) error
 	}
 
 	return s.roleRepo.Delete(ctx, tenantID, roleID)
-}
-
-func (s *RoleService) ValidateRole(ctx context.Context, tenantID, slug string) bool {
-	if err := s.EnsureDefaults(ctx, tenantID); err != nil {
-		return false
-	}
-	role, err := s.roleRepo.FindBySlug(ctx, tenantID, slug)
-	return err == nil && role != nil
 }
 
 func (s *RoleService) EnsureDefaults(ctx context.Context, tenantID string) error {

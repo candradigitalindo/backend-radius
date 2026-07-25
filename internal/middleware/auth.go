@@ -92,6 +92,14 @@ func (m *AuthMiddleware) Handle() fiber.Handler {
 			})
 		}
 
+		// Only access tokens may be used as Bearer credentials. Refresh tokens are
+		// signed with the same key but must never authorize API calls.
+		if tokenType, _ := claims["type"].(string); tokenType != "access" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid token type",
+			})
+		}
+
 		// Store token expiry for logout blacklisting
 		if exp, ok := claims["exp"].(float64); ok {
 			c.Locals("token_exp", time.Unix(int64(exp), 0))

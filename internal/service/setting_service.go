@@ -105,10 +105,6 @@ func (s *SettingService) Delete(ctx context.Context, tenantID, key string) error
 	return s.settingRepo.Delete(ctx, tenantID, key)
 }
 
-func (s *SettingService) List(ctx context.Context, tenantID string) ([]model.Setting, error) {
-	return s.settingRepo.List(ctx, tenantID)
-}
-
 func (s *SettingService) BulkSet(ctx context.Context, tenantID string, settings map[string]string) error {
 	for k, v := range settings {
 		if !allowedSettingKeys[strings.TrimSpace(k)] {

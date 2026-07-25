@@ -3,6 +3,7 @@ package payment
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
@@ -193,7 +194,7 @@ func (c *MidtransClient) VerifyWebhookSignature(n MidtransNotification) bool {
 	raw := n.OrderID + n.StatusCode + n.GrossAmount + c.serverKey
 	hash := sha512.Sum512([]byte(raw))
 	expected := hex.EncodeToString(hash[:])
-	return expected == n.SignatureKey
+	return hmac.Equal([]byte(expected), []byte(n.SignatureKey))
 }
 
 // IsPaymentSuccess returns true if the notification status indicates a successful payment.

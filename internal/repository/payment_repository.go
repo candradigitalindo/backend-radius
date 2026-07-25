@@ -16,6 +16,7 @@ type PaymentRepository interface {
 	Create(ctx context.Context, payment *model.Payment) error
 	FindByID(ctx context.Context, tenantID, paymentID string) (*model.Payment, error)
 	FindByGatewayTrxID(ctx context.Context, gatewayTrxID string) (*model.Payment, error)
+	FindByGatewayTrxIDForTenant(ctx context.Context, tenantID, gatewayTrxID string) (*model.Payment, error)
 	UpdateStatus(ctx context.Context, paymentID, status string) error
 	Delete(ctx context.Context, tenantID, paymentID string) error
 	ListByInvoice(ctx context.Context, tenantID, invoiceID string) ([]model.Payment, error)
@@ -92,6 +93,31 @@ func (r *paymentRepository) FindByGatewayTrxID(ctx context.Context, gatewayTrxID
 		FROM payments
 		WHERE gateway_trx_id = $1
 	`, gatewayTrxID).Scan(
+		&p.ID, &p.TenantID, &p.InvoiceID, &p.Amount, &p.PaymentMethod, &p.Gateway,
+		&p.GatewayTrxID, &p.GatewayStatus, &p.GatewayResponse, &p.Status,
+		&p.PaidAt, &p.ExpiredAt, &p.CollectedBy, &p.Notes, &p.CreatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+// FindByGatewayTrxIDForTenant scopes the lookup to one tenant. Gateway trx IDs
+// (a per-tenant date+sequence) are not globally unique, so a webhook must match
+// within the tenant it authenticated as, otherwise it can hit another tenant's row.
+func (r *paymentRepository) FindByGatewayTrxIDForTenant(ctx context.Context, tenantID, gatewayTrxID string) (*model.Payment, error) {
+	var p model.Payment
+	err := r.db.QueryRow(ctx, `
+		SELECT id, tenant_id, invoice_id, amount, payment_method, COALESCE(gateway,''),
+		       COALESCE(gateway_trx_id,''), COALESCE(gateway_status,''), gateway_response, status,
+		       paid_at, expired_at, collected_by, COALESCE(notes,''), created_at
+		FROM payments
+		WHERE gateway_trx_id = $1 AND tenant_id = $2
+	`, gatewayTrxID, tenantID).Scan(
 		&p.ID, &p.TenantID, &p.InvoiceID, &p.Amount, &p.PaymentMethod, &p.Gateway,
 		&p.GatewayTrxID, &p.GatewayStatus, &p.GatewayResponse, &p.Status,
 		&p.PaidAt, &p.ExpiredAt, &p.CollectedBy, &p.Notes, &p.CreatedAt,

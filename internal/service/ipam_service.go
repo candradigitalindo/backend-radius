@@ -94,18 +94,6 @@ func (s *IPAMService) CreateAddressBatch(ctx context.Context, addrs []model.IPAd
 	return s.ipamRepo.CreateAddressBatch(ctx, addrs)
 }
 
-func (s *IPAMService) GetAddress(ctx context.Context, tenantID, addrID string) (*model.IPAddress, error) {
-	return s.ipamRepo.GetAddress(ctx, tenantID, addrID)
-}
-
-func (s *IPAMService) UpdateAddress(ctx context.Context, addr *model.IPAddress) error {
-	return s.ipamRepo.UpdateAddress(ctx, addr)
-}
-
-func (s *IPAMService) DeleteAddress(ctx context.Context, tenantID, addrID string) error {
-	return s.ipamRepo.DeleteAddress(ctx, tenantID, addrID)
-}
-
 func (s *IPAMService) ListAddresses(ctx context.Context, tenantID, poolID string, filter repository.IPAddressFilter) ([]model.IPAddress, int, error) {
 	return s.ipamRepo.ListAddresses(ctx, tenantID, poolID, filter)
 }

@@ -86,18 +86,6 @@ func NewTriggerRemindersTask(p TriggerRemindersPayload) (*asynq.Task, error) {
 	return asynq.NewTask(TaskTriggerReminders, data), nil
 }
 
-func NewProcessPaymentTask(p ProcessPaymentPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(p)
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskProcessPayment, data), nil
-}
-
-func NewExpirePaymentsTask() (*asynq.Task, error) {
-	return asynq.NewTask(TaskExpirePayments, nil), nil
-}
-
 func NewRouterMonitorTask(p RouterMonitorPayload) (*asynq.Task, error) {
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -116,18 +104,6 @@ func NewCleanSessionsTask(p CleanSessionsPayload) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TaskCleanSessions, data), nil
-}
-
-func NewONTProvisionRetryTask() (*asynq.Task, error) {
-	return asynq.NewTask(TaskONTProvisionRetry, nil), nil
-}
-
-func NewONTDiscoverTask() (*asynq.Task, error) {
-	return asynq.NewTask(TaskONTDiscover, nil), nil
-}
-
-func NewONTAutoMatchTask() (*asynq.Task, error) {
-	return asynq.NewTask(TaskONTAutoMatch, nil), nil
 }
 
 type SubExpiryCheckPayload struct{}

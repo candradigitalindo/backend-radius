@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log"
 
 	"github.com/gofiber/fiber/v2"
@@ -8,6 +9,16 @@ import (
 	"github.com/candrasyahputra/radius-server/internal/pkg/payment"
 	"github.com/candrasyahputra/radius-server/internal/service"
 )
+
+// webhookStatus returns 5xx for transient (retryable) processing failures so the
+// payment provider retries delivery, and 200 for permanent errors (bad signature,
+// not found, misconfiguration) so it stops retrying.
+func webhookStatus(err error) int {
+	if errors.Is(err, service.ErrWebhookRetryable) {
+		return fiber.StatusInternalServerError
+	}
+	return fiber.StatusOK
+}
 
 // WebhookHandler handles payment gateway webhook callbacks.
 type WebhookHandler struct {
@@ -47,7 +58,7 @@ func (h *WebhookHandler) TripayCallback(c *fiber.Ctx) error {
 	if err := h.invoiceService.ProcessTripayWebhook(c.Context(), slug, rawBody, signature, payload); err != nil {
 		log.Printf("[webhook] tripay process error: %v", err)
 		// Always return 200 so Tripay does not keep retrying
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -68,7 +79,7 @@ func (h *WebhookHandler) MidtransCallback(c *fiber.Ctx) error {
 	if err := h.invoiceService.ProcessMidtransWebhook(c.Context(), slug, n); err != nil {
 		log.Printf("[webhook] midtrans process error: %v", err)
 		// Always return 200 so Midtrans does not keep retrying
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -92,7 +103,7 @@ func (h *WebhookHandler) TripayVoucherCallback(c *fiber.Ctx) error {
 
 	if err := h.voucherService.ProcessVoucherTripayWebhook(c.Context(), slug, rawBody, signature, payload); err != nil {
 		log.Printf("[webhook] tripay voucher error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -114,7 +125,7 @@ func (h *WebhookHandler) MidtransVoucherCallback(c *fiber.Ctx) error {
 
 	if err := h.voucherService.ProcessVoucherMidtransWebhook(c.Context(), slug, n); err != nil {
 		log.Printf("[webhook] midtrans voucher error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -137,7 +148,7 @@ func (h *WebhookHandler) TripaySubscriptionCallback(c *fiber.Ctx) error {
 
 	if err := h.subscriptionService.ProcessSubTripayWebhook(c.Context(), rawBody, signature, payload); err != nil {
 		log.Printf("[webhook] tripay subscription error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -158,7 +169,7 @@ func (h *WebhookHandler) MidtransSubscriptionCallback(c *fiber.Ctx) error {
 
 	if err := h.subscriptionService.ProcessSubMidtransWebhook(c.Context(), n); err != nil {
 		log.Printf("[webhook] midtrans subscription error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -179,7 +190,7 @@ func (h *WebhookHandler) XenditCallback(c *fiber.Ctx) error {
 
 	if err := h.invoiceService.ProcessXenditWebhook(c.Context(), slug, callbackToken, payload); err != nil {
 		log.Printf("[webhook] xendit process error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -203,7 +214,7 @@ func (h *WebhookHandler) XenditVoucherCallback(c *fiber.Ctx) error {
 
 	if err := h.voucherService.ProcessVoucherXenditWebhook(c.Context(), slug, callbackToken, payload); err != nil {
 		log.Printf("[webhook] xendit voucher error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -226,7 +237,7 @@ func (h *WebhookHandler) XenditSubscriptionCallback(c *fiber.Ctx) error {
 
 	if err := h.subscriptionService.ProcessSubXenditWebhook(c.Context(), callbackToken, payload); err != nil {
 		log.Printf("[webhook] xendit subscription error: %v", err)
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "error", "message": err.Error()})
+		return c.Status(webhookStatus(err)).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})

@@ -217,36 +217,6 @@ func (s *VoucherService) ListVouchers(ctx context.Context, tenantID string, filt
 	return s.voucherRepo.List(ctx, tenantID, filter)
 }
 
-func (s *VoucherService) SellVoucher(ctx context.Context, tenantID, voucherID, buyerPhone string) (*model.Voucher, error) {
-	voucher, err := s.voucherRepo.FindByID(ctx, tenantID, voucherID)
-	if err != nil {
-		return nil, err
-	}
-	if voucher == nil {
-		return nil, ErrVoucherNotFound
-	}
-	if voucher.Status != "available" {
-		return nil, ErrVoucherNotAvailable
-	}
-
-	voucher.BuyerPhone = &buyerPhone
-	if err := s.voucherRepo.MarkSold(ctx, voucher); err != nil {
-		return nil, err
-	}
-
-	return s.voucherRepo.FindByID(ctx, tenantID, voucherID)
-}
-
-func (s *VoucherService) CountAvailable(ctx context.Context, tenantID, productID string) (int, error) {
-	return s.voucherRepo.CountByProduct(ctx, tenantID, productID, "available")
-}
-
-// -- Voucher Payments --
-
-func (s *VoucherService) ListPayments(ctx context.Context, tenantID string, filter repository.VoucherPaymentFilter) ([]model.VoucherPayment, int, error) {
-	return s.paymentRepo.List(ctx, tenantID, filter)
-}
-
 // generateCode creates a random alphanumeric code with an optional prefix.
 func generateCode(prefix string, length int) string {
 	const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -259,29 +229,6 @@ func generateCode(prefix string, length int) string {
 		return fmt.Sprintf("%s-%s", prefix, string(code))
 	}
 	return string(code)
-}
-
-// ActivateVoucher marks a voucher as active and sets expiration based on product duration.
-func (s *VoucherService) ActivateVoucher(ctx context.Context, tenantID, voucherID string) (*model.Voucher, error) {
-	voucher, err := s.voucherRepo.FindByID(ctx, tenantID, voucherID)
-	if err != nil {
-		return nil, err
-	}
-	if voucher == nil {
-		return nil, ErrVoucherNotFound
-	}
-	if voucher.Status != "sold" && voucher.Status != "available" {
-		return nil, ErrVoucherNotAvailable
-	}
-
-	now := time.Now()
-	expiresAt := now.Add(time.Duration(voucher.Product.Duration) * 24 * time.Hour)
-
-	if err := s.voucherRepo.Activate(ctx, voucherID, now, expiresAt); err != nil {
-		return nil, err
-	}
-
-	return s.voucherRepo.FindByID(ctx, tenantID, voucherID)
 }
 
 // --- Public Voucher Store ---
@@ -500,9 +447,9 @@ func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, tenant
 		return fmt.Errorf("signature Tripay tidak valid")
 	}
 
-	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.Reference)
+	vp, err := s.paymentRepo.FindByGatewayTrxIDForTenant(ctx, tenant.ID, payload.Reference)
 	if err != nil {
-		return fmt.Errorf("find voucher payment: %w", err)
+		return fmt.Errorf("%w: find voucher payment: %v", ErrWebhookRetryable, err)
 	}
 	if vp == nil {
 		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk referensi %s", payload.Reference)
@@ -510,17 +457,22 @@ func (s *VoucherService) ProcessVoucherTripayWebhook(ctx context.Context, tenant
 	if vp.TenantID != tenant.ID {
 		return fmt.Errorf("pembayaran tidak milik tenant ini")
 	}
+	// Idempotency: a replayed PAID callback (providers retry) must not re-send the
+	// voucher credentials again, nor flip an already-settled payment.
+	if vp.Status == "paid" {
+		return nil
+	}
 
 	switch payload.Status {
 	case "PAID":
 		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "paid"); err != nil {
-			return fmt.Errorf("update voucher payment: %w", err)
+			return fmt.Errorf("%w: update voucher payment: %v", ErrWebhookRetryable, err)
 		}
 		s.sendVoucherTobuyer(ctx, vp)
 
 	case "EXPIRED", "FAILED":
 		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "failed"); err != nil {
-			return fmt.Errorf("update voucher payment: %w", err)
+			return fmt.Errorf("%w: update voucher payment: %v", ErrWebhookRetryable, err)
 		}
 		// Release voucher back to available
 		_ = s.voucherRepo.UpdateStatus(ctx, vp.VoucherID, "available")
@@ -546,9 +498,9 @@ func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, tena
 		return fmt.Errorf("signature Midtrans tidak valid")
 	}
 
-	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, n.OrderID)
+	vp, err := s.paymentRepo.FindByGatewayTrxIDForTenant(ctx, tenant.ID, n.OrderID)
 	if err != nil {
-		return fmt.Errorf("find voucher payment: %w", err)
+		return fmt.Errorf("%w: find voucher payment: %v", ErrWebhookRetryable, err)
 	}
 	if vp == nil {
 		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk order_id %s", n.OrderID)
@@ -556,16 +508,21 @@ func (s *VoucherService) ProcessVoucherMidtransWebhook(ctx context.Context, tena
 	if vp.TenantID != tenant.ID {
 		return fmt.Errorf("pembayaran tidak milik tenant ini")
 	}
+	// Idempotency: a replayed PAID callback (providers retry) must not re-send the
+	// voucher credentials again, nor flip an already-settled payment.
+	if vp.Status == "paid" {
+		return nil
+	}
 
 	if payment.IsPaymentSuccess(n) {
 		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "paid"); err != nil {
-			return fmt.Errorf("update voucher payment: %w", err)
+			return fmt.Errorf("%w: update voucher payment: %v", ErrWebhookRetryable, err)
 		}
 		s.sendVoucherTobuyer(ctx, vp)
 
 	} else if payment.IsPaymentFailed(n) {
 		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "failed"); err != nil {
-			return fmt.Errorf("update voucher payment: %w", err)
+			return fmt.Errorf("%w: update voucher payment: %v", ErrWebhookRetryable, err)
 		}
 		// Release voucher back to available
 		_ = s.voucherRepo.UpdateStatus(ctx, vp.VoucherID, "available")
@@ -591,9 +548,9 @@ func (s *VoucherService) ProcessVoucherXenditWebhook(ctx context.Context, tenant
 		return fmt.Errorf("token Xendit tidak valid")
 	}
 
-	vp, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.ExternalID)
+	vp, err := s.paymentRepo.FindByGatewayTrxIDForTenant(ctx, tenant.ID, payload.ExternalID)
 	if err != nil {
-		return fmt.Errorf("find voucher payment: %w", err)
+		return fmt.Errorf("%w: find voucher payment: %v", ErrWebhookRetryable, err)
 	}
 	if vp == nil {
 		return fmt.Errorf("pembayaran voucher tidak ditemukan untuk external_id %s", payload.ExternalID)
@@ -601,16 +558,21 @@ func (s *VoucherService) ProcessVoucherXenditWebhook(ctx context.Context, tenant
 	if vp.TenantID != tenant.ID {
 		return fmt.Errorf("pembayaran tidak milik tenant ini")
 	}
+	// Idempotency: a replayed PAID callback (providers retry) must not re-send the
+	// voucher credentials again, nor flip an already-settled payment.
+	if vp.Status == "paid" {
+		return nil
+	}
 
 	if payment.IsXenditPaymentSuccess(payload) {
 		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "paid"); err != nil {
-			return fmt.Errorf("update voucher payment: %w", err)
+			return fmt.Errorf("%w: update voucher payment: %v", ErrWebhookRetryable, err)
 		}
 		s.sendVoucherTobuyer(ctx, vp)
 
 	} else if payment.IsXenditPaymentFailed(payload) {
 		if err := s.paymentRepo.UpdateStatus(ctx, vp.ID, "failed"); err != nil {
-			return fmt.Errorf("update voucher payment: %w", err)
+			return fmt.Errorf("%w: update voucher payment: %v", ErrWebhookRetryable, err)
 		}
 		_ = s.voucherRepo.UpdateStatus(ctx, vp.VoucherID, "available")
 	}

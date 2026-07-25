@@ -15,6 +15,7 @@ var (
 	ErrCannotDeleteSelf = errors.New("tidak dapat menghapus akun sendiri")
 	ErrCannotEditSelf   = errors.New("tidak dapat mengubah role akun sendiri")
 	ErrInvalidRole      = errors.New("role tidak valid")
+	ErrCannotAssignOwner = errors.New("hanya owner yang dapat menetapkan atau mengubah role owner")
 )
 
 type UserService struct {
@@ -64,17 +65,23 @@ func (s *UserService) List(ctx context.Context, tenantID string) ([]UserListItem
 }
 
 type CreateUserInput struct {
-	TenantID string
-	Name     string
-	Email    string
-	Password string
-	Role     string
-	Phone    string
+	TenantID  string
+	Name      string
+	Email     string
+	Password  string
+	Role      string
+	Phone     string
+	ActorRole string // role slug of the user performing this action
 }
 
 func (s *UserService) Create(ctx context.Context, input CreateUserInput) (*UserListItem, error) {
 	if !s.isValidRole(ctx, input.TenantID, input.Role) {
 		return nil, ErrInvalidRole
+	}
+	// Only an owner may create another owner — otherwise any user with
+	// users.create could mint an owner account and take over the tenant.
+	if input.Role == "owner" && input.ActorRole != "owner" {
+		return nil, ErrCannotAssignOwner
 	}
 
 	existing, err := s.userRepo.FindByEmail(ctx, input.TenantID, input.Email)
@@ -126,6 +133,7 @@ type UpdateUserInput struct {
 	Phone       string
 	IsActive    *bool
 	Password    string // optional — only set if non-empty
+	ActorRole   string // role slug of the user performing this action
 }
 
 func (s *UserService) Update(ctx context.Context, input UpdateUserInput) (*UserListItem, error) {
@@ -139,6 +147,13 @@ func (s *UserService) Update(ctx context.Context, input UpdateUserInput) (*UserL
 	}
 	if user == nil || user.TenantID != input.TenantID {
 		return nil, ErrUserNotFound
+	}
+
+	// Only an owner may promote someone to owner, or edit an existing owner
+	// (e.g. reset their password / demote them). Prevents privilege escalation
+	// and owner-account hijacking by a non-owner with users.edit.
+	if (input.Role == "owner" || user.Role == "owner") && input.ActorRole != "owner" {
+		return nil, ErrCannotAssignOwner
 	}
 
 	// Prevent editing own role

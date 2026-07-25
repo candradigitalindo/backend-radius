@@ -100,25 +100,6 @@ func (h *NotificationHandler) AdminList(c *fiber.Ctx) error {
 	})
 }
 
-func (h *NotificationHandler) List(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-	customerID, _ := c.Locals("user_id").(string)
-	page, _ := strconv.Atoi(c.Query("page", "1"))
-	perPage, _ := strconv.Atoi(c.Query("per_page", "20"))
-
-	notifs, total, err := h.notifService.GetNotifications(c.Context(), tenantID, customerID, page, perPage)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengambil notifikasi"})
-	}
-
-	return c.JSON(fiber.Map{
-		"notifications": notifs,
-		"total":         total,
-		"page":          page,
-		"per_page":      perPage,
-	})
-}
-
 func (h *NotificationHandler) MarkRead(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 	notifID := c.Params("id")
@@ -128,41 +109,6 @@ func (h *NotificationHandler) MarkRead(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "Notifikasi ditandai dibaca"})
-}
-
-func (h *NotificationHandler) CustomerMarkRead(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-	customerID, _ := c.Locals("user_id").(string)
-	notifID := c.Params("id")
-
-	if err := h.notifService.MarkReadByCustomer(c.Context(), tenantID, notifID, customerID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menandai notifikasi sebagai dibaca"})
-	}
-
-	return c.JSON(fiber.Map{"message": "Notifikasi ditandai dibaca"})
-}
-
-func (h *NotificationHandler) MarkAllRead(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-	customerID, _ := c.Locals("user_id").(string)
-
-	if err := h.notifService.MarkAllRead(c.Context(), tenantID, customerID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menandai semua sebagai dibaca"})
-	}
-
-	return c.JSON(fiber.Map{"message": "Semua notifikasi ditandai dibaca"})
-}
-
-func (h *NotificationHandler) UnreadCount(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-	customerID, _ := c.Locals("user_id").(string)
-
-	count, err := h.notifService.UnreadCount(c.Context(), tenantID, customerID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengambil jumlah belum dibaca"})
-	}
-
-	return c.JSON(fiber.Map{"unread_count": count})
 }
 
 type sendNotificationRequest struct {

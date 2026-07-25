@@ -311,23 +311,3 @@ func (h *InvoiceHandler) ListPayments(c *fiber.Ctx) error {
 		"per_page": perPage,
 	})
 }
-
-func (h *InvoiceHandler) ListByCustomer(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-	customerID := c.Params("id")
-
-	page, _ := strconv.Atoi(c.Query("page", "1"))
-	perPage, _ := strconv.Atoi(c.Query("per_page", "20"))
-
-	invoices, total, err := h.invoiceService.ListByCustomer(c.Context(), tenantID, customerID, page, perPage)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat daftar faktur"})
-	}
-
-	return c.JSON(fiber.Map{
-		"data":     invoices,
-		"total":    total,
-		"page":     page,
-		"per_page": perPage,
-	})
-}

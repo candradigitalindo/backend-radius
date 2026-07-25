@@ -119,8 +119,8 @@ services:
   # http://n8n:5678 (same default network); UI published on localhost only (access
   # via SSH tunnel: ssh -L 5678:localhost:5678 <server> → http://localhost:5678).
   # --- GenieACS TR-069 (CWMP) stack ---------------------------------------
-  # ONT/CPE management. ONTs inform to https://app.dradius.net/cwmp -> nginx ->
-  # app:3000 /cwmp -> proxied to genieacs-cwmp. Backend manages devices via
+  # ONT/CPE management. ONTs inform to http://acs.dradius.net/cwmp (DNS-only,
+  # bypass Cloudflare) -> proxy_nginx -> radius_nginx -> app:3000 /cwmp -> genieacs-cwmp.
   # genieacs-nbi (REST). All internal-only (same default network); nothing
   # published to the host except via the app.
   acs_mongo:

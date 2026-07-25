@@ -25,7 +25,21 @@ var (
 	ErrPaymentNotFound           = errors.New("Pembayaran tidak ditemukan")
 	ErrInvoiceNotOwnedByCustomer = errors.New("Faktur bukan milik pelanggan ini")
 	ErrPaymentGatewayInactive    = errors.New("Pembayaran online belum aktif untuk tenant ini")
+	ErrPaymentAmountInsufficient = errors.New("Jumlah pembayaran kurang dari total tagihan")
+	// ErrWebhookRetryable marks a transient (e.g. DB) failure while processing a
+	// webhook. Handlers should return 5xx for these so the provider retries;
+	// permanent errors (bad signature, not found) return 200 to stop retries.
+	ErrWebhookRetryable = errors.New("kesalahan sementara saat memproses webhook")
 )
+
+// retryable tags a webhook processing error as transient so the handler returns
+// 5xx and the provider retries. Passes through nil unchanged.
+func retryable(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %v", ErrWebhookRetryable, err)
+}
 
 type InvoiceService struct {
 	invoiceRepo        repository.InvoiceRepository
@@ -128,15 +142,6 @@ func (s *InvoiceService) WithNotificationService(n *NotificationService) *Invoic
 	return s
 }
 
-// WebhookURLs returns the per-tenant webhook callback URLs for a given tenant slug.
-func (s *InvoiceService) WebhookURLs(tenantSlug string) map[string]string {
-	return map[string]string{
-		"tripay":   s.baseURL + "/api/v1/webhooks/tripay/" + tenantSlug,
-		"midtrans": s.baseURL + "/api/v1/webhooks/midtrans/" + tenantSlug,
-		"xendit":   s.baseURL + "/api/v1/webhooks/xendit/" + tenantSlug,
-	}
-}
-
 // ApplyProratedPackageChange menghitung dan menerapkan penyesuaian prorata saat
 // paket/harga customer berubah di tengah periode billing berjalan.
 //
@@ -159,9 +164,13 @@ func (s *InvoiceService) ApplyProratedPackageChange(ctx context.Context, tenantI
 		return 0, err // tidak ada invoice berjalan, tidak perlu penyesuaian
 	}
 
-	// Hitung periode invoice (invoice_date → due_date)
-	// Gunakan 30 hari sebagai basis jika tidak bisa dihitung
-	totalDays := invoice.DueDate.Sub(invoice.CreatedAt.Truncate(24*time.Hour)).Hours() / 24
+	// Basis prorata = jumlah hari dalam BULAN tagihan (model tagihan bulanan).
+	// Sebelumnya memakai jarak invoice_date→due_date (sering hanya ~7 hari untuk
+	// tagihan di muka), yang menggelembungkan tarif harian beberapa kali lipat.
+	var totalDays float64
+	if invoice.PeriodMonth >= 1 && invoice.PeriodMonth <= 12 && invoice.PeriodYear > 0 {
+		totalDays = float64(time.Date(invoice.PeriodYear, time.Month(invoice.PeriodMonth)+1, 0, 0, 0, 0, 0, time.UTC).Day())
+	}
 	if totalDays <= 0 {
 		totalDays = 30
 	}
@@ -422,10 +431,6 @@ func (s *InvoiceService) Delete(ctx context.Context, tenantID, invoiceID string)
 
 func (s *InvoiceService) List(ctx context.Context, tenantID string, filter repository.InvoiceFilter) ([]model.Invoice, int, error) {
 	return s.invoiceRepo.List(ctx, tenantID, filter)
-}
-
-func (s *InvoiceService) ListByCustomer(ctx context.Context, tenantID, customerID string, page, perPage int) ([]model.Invoice, int, error) {
-	return s.invoiceRepo.ListByCustomer(ctx, tenantID, customerID, page, perPage)
 }
 
 // GenerateMonthly generates invoices for a specific due period.
@@ -1049,6 +1054,11 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, input RecordPaymentI
 	if invoice.Status == "paid" {
 		return nil, ErrInvoiceAlreadyPaid
 	}
+	// Recording a payment marks the invoice fully paid, so the amount collected
+	// must cover the full balance. Underpayment must not clear the invoice.
+	if input.Amount < invoice.TotalAmount {
+		return nil, ErrPaymentAmountInsufficient
+	}
 
 	now := time.Now()
 	payment := &model.Payment{
@@ -1068,10 +1078,17 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, input RecordPaymentI
 
 	invoice.PaidAmount = &input.Amount
 	invoice.PaymentMethod = &input.PaymentMethod
-	if err := s.invoiceRepo.MarkPaid(ctx, invoice); err != nil {
+	applied, err := s.invoiceRepo.MarkPaid(ctx, invoice)
+	if err != nil {
 		// Rollback: delete the orphan payment record to maintain consistency
 		_ = s.paymentRepo.Delete(context.Background(), input.TenantID, payment.ID)
 		return nil, err
+	}
+	if !applied {
+		// Another payment already settled this invoice concurrently — undo the
+		// duplicate record and report it, don't double-run automations.
+		_ = s.paymentRepo.Delete(context.Background(), input.TenantID, payment.ID)
+		return nil, ErrInvoiceAlreadyPaid
 	}
 
 	// Auto-activate customer if currently isolated
@@ -1322,9 +1339,9 @@ func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, tenantSlug st
 		return fmt.Errorf("signature webhook Tripay tidak valid")
 	}
 
-	paymentRecord, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.Reference)
+	paymentRecord, err := s.paymentRepo.FindByGatewayTrxIDForTenant(ctx, tenant.ID, payload.Reference)
 	if err != nil {
-		return fmt.Errorf("find payment by trx_id: %w", err)
+		return fmt.Errorf("%w: find payment by trx_id: %v", ErrWebhookRetryable, err)
 	}
 	if paymentRecord == nil {
 		return fmt.Errorf("pembayaran tidak ditemukan untuk referensi %s", payload.Reference)
@@ -1336,34 +1353,33 @@ func (s *InvoiceService) ProcessTripayWebhook(ctx context.Context, tenantSlug st
 	switch payload.Status {
 	case "PAID":
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "paid"); err != nil {
-			return fmt.Errorf("update payment status: %w", err)
+			return fmt.Errorf("%w: update payment status: %v", ErrWebhookRetryable, err)
 		}
 
 		invoice, err := s.invoiceRepo.FindByID(ctx, paymentRecord.TenantID, paymentRecord.InvoiceID)
 		if err != nil {
-			return fmt.Errorf("load invoice: %w", err)
+			return fmt.Errorf("%w: load invoice: %v", ErrWebhookRetryable, err)
 		}
-		if invoice != nil && invoice.Status != "paid" {
+		if invoice != nil {
 			method := payload.PaymentMethod
 			invoice.PaidAmount = &paymentRecord.Amount
 			invoice.PaymentMethod = &method
-			if err := s.invoiceRepo.MarkPaid(ctx, invoice); err != nil {
-				return fmt.Errorf("mark invoice paid: %w", err)
+			applied, err := s.invoiceRepo.MarkPaid(ctx, invoice)
+			if err != nil {
+				return fmt.Errorf("%w: mark invoice paid: %v", ErrWebhookRetryable, err)
 			}
-
-			// Auto-activate customer if currently isolated
-			s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
-
-			// Post-payment automations: reseller commission + reward
-			s.onInvoicePaid(paymentRecord.TenantID, invoice)
-
-			// Send payment confirmation via WhatsApp
-			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
+			// Run post-payment automations only when THIS call transitioned the
+			// invoice — a concurrent/duplicate callback must not double-credit.
+			if applied {
+				s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
+				s.onInvoicePaid(paymentRecord.TenantID, invoice)
+				go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
+			}
 		}
 
 	case "EXPIRED", "FAILED":
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "failed"); err != nil {
-			return fmt.Errorf("update payment status to failed: %w", err)
+			return fmt.Errorf("%w: update payment status to failed: %v", ErrWebhookRetryable, err)
 		}
 	}
 
@@ -1389,9 +1405,9 @@ func (s *InvoiceService) ProcessMidtransWebhook(ctx context.Context, tenantSlug 
 	}
 
 	// Look up payment by order_id (stored as GatewayTrxID for Midtrans)
-	paymentRecord, err := s.paymentRepo.FindByGatewayTrxID(ctx, n.OrderID)
+	paymentRecord, err := s.paymentRepo.FindByGatewayTrxIDForTenant(ctx, tenant.ID, n.OrderID)
 	if err != nil {
-		return fmt.Errorf("find payment by order_id: %w", err)
+		return fmt.Errorf("%w: find payment by order_id: %v", ErrWebhookRetryable, err)
 	}
 	if paymentRecord == nil {
 		return fmt.Errorf("pembayaran tidak ditemukan untuk order_id %s", n.OrderID)
@@ -1402,12 +1418,12 @@ func (s *InvoiceService) ProcessMidtransWebhook(ctx context.Context, tenantSlug 
 
 	if payment.IsPaymentSuccess(n) {
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "paid"); err != nil {
-			return fmt.Errorf("update payment status: %w", err)
+			return fmt.Errorf("%w: update payment status: %v", ErrWebhookRetryable, err)
 		}
 
 		invoice, err := s.invoiceRepo.FindByID(ctx, paymentRecord.TenantID, paymentRecord.InvoiceID)
 		if err != nil {
-			return fmt.Errorf("load invoice: %w", err)
+			return fmt.Errorf("%w: load invoice: %v", ErrWebhookRetryable, err)
 		}
 		if invoice != nil && invoice.Status != "paid" {
 			method := n.PaymentType
@@ -1417,22 +1433,21 @@ func (s *InvoiceService) ProcessMidtransWebhook(ctx context.Context, tenantSlug 
 			}
 			invoice.PaidAmount = &amount
 			invoice.PaymentMethod = &method
-			if err := s.invoiceRepo.MarkPaid(ctx, invoice); err != nil {
-				return fmt.Errorf("mark invoice paid: %w", err)
+			applied, err := s.invoiceRepo.MarkPaid(ctx, invoice)
+			if err != nil {
+				return fmt.Errorf("%w: mark invoice paid: %v", ErrWebhookRetryable, err)
 			}
-
-			// Auto-activate customer if currently isolated
-			s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
-
-			// Post-payment automations: reseller commission + reward
-			s.onInvoicePaid(paymentRecord.TenantID, invoice)
-
-			// Send payment confirmation via WhatsApp
-			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
+			// Run post-payment automations only when THIS call transitioned the
+			// invoice — a concurrent/duplicate callback must not double-credit.
+			if applied {
+				s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
+				s.onInvoicePaid(paymentRecord.TenantID, invoice)
+				go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
+			}
 		}
 	} else if payment.IsPaymentFailed(n) {
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "failed"); err != nil {
-			return fmt.Errorf("update payment status to failed: %w", err)
+			return fmt.Errorf("%w: update payment status to failed: %v", ErrWebhookRetryable, err)
 		}
 	}
 
@@ -1458,9 +1473,9 @@ func (s *InvoiceService) ProcessXenditWebhook(ctx context.Context, tenantSlug, c
 	}
 
 	// Look up payment by external_id (stored as GatewayTrxID for Xendit)
-	paymentRecord, err := s.paymentRepo.FindByGatewayTrxID(ctx, payload.ExternalID)
+	paymentRecord, err := s.paymentRepo.FindByGatewayTrxIDForTenant(ctx, tenant.ID, payload.ExternalID)
 	if err != nil {
-		return fmt.Errorf("find payment by external_id: %w", err)
+		return fmt.Errorf("%w: find payment by external_id: %v", ErrWebhookRetryable, err)
 	}
 	if paymentRecord == nil {
 		return fmt.Errorf("pembayaran tidak ditemukan untuk external_id %s", payload.ExternalID)
@@ -1470,13 +1485,21 @@ func (s *InvoiceService) ProcessXenditWebhook(ctx context.Context, tenantSlug, c
 	}
 
 	if payment.IsXenditPaymentSuccess(payload) {
+		// Xendit callbacks are authenticated by a static token only — the body
+		// (incl. amount) is not cryptographically bound to it. Reject underpayment
+		// so a tampered/underpaid callback can't clear a full invoice.
+		if int64(payload.PaidAmount) < paymentRecord.Amount {
+			log.Printf("[webhook] xendit underpaid: external_id=%s paid=%d expected=%d — ditolak",
+				payload.ExternalID, int64(payload.PaidAmount), paymentRecord.Amount)
+			return fmt.Errorf("jumlah pembayaran (%d) kurang dari yang diharapkan (%d)", int64(payload.PaidAmount), paymentRecord.Amount)
+		}
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "paid"); err != nil {
-			return fmt.Errorf("update payment status: %w", err)
+			return fmt.Errorf("%w: update payment status: %v", ErrWebhookRetryable, err)
 		}
 
 		invoice, err := s.invoiceRepo.FindByID(ctx, paymentRecord.TenantID, paymentRecord.InvoiceID)
 		if err != nil {
-			return fmt.Errorf("load invoice: %w", err)
+			return fmt.Errorf("%w: load invoice: %v", ErrWebhookRetryable, err)
 		}
 		if invoice != nil && invoice.Status != "paid" {
 			method := payload.PaymentMethod
@@ -1486,21 +1509,22 @@ func (s *InvoiceService) ProcessXenditWebhook(ctx context.Context, tenantSlug, c
 			paidAmount := int64(payload.PaidAmount)
 			invoice.PaidAmount = &paidAmount
 			invoice.PaymentMethod = &method
-			if err := s.invoiceRepo.MarkPaid(ctx, invoice); err != nil {
-				return fmt.Errorf("mark invoice paid: %w", err)
+			applied, err := s.invoiceRepo.MarkPaid(ctx, invoice)
+			if err != nil {
+				return fmt.Errorf("%w: mark invoice paid: %v", ErrWebhookRetryable, err)
 			}
-
-			s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
-
-			if s.rewardSvc != nil {
-				go s.rewardSvc.ProcessRewardOnPayment(context.Background(), paymentRecord.TenantID, invoice.CustomerID)
+			// Run post-payment automations only when THIS call transitioned the
+			// invoice. Reseller commission (via onInvoicePaid) previously never
+			// ran on Xendit at all; now it runs exactly once.
+			if applied {
+				s.autoActivateCustomer(ctx, paymentRecord.TenantID, invoice.CustomerID)
+				s.onInvoicePaid(paymentRecord.TenantID, invoice)
+				go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
 			}
-
-			go s.sendPaymentNotification(context.Background(), paymentRecord.TenantID, invoice, method)
 		}
 	} else if payment.IsXenditPaymentFailed(payload) {
 		if err := s.paymentRepo.UpdateStatus(ctx, paymentRecord.ID, "failed"); err != nil {
-			return fmt.Errorf("update payment status to failed: %w", err)
+			return fmt.Errorf("%w: update payment status to failed: %v", ErrWebhookRetryable, err)
 		}
 	}
 

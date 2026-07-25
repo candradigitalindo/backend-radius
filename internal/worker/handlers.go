@@ -126,9 +126,10 @@ func (h *Handlers) HandleAutoIsolir(ctx context.Context, t *asynq.Task) error {
 		return fmt.Errorf("tenant %s not found", p.TenantID)
 	}
 
-	// defaultIsolirDay = tenant.GracePeriod (used as fallback for customers without billing profile).
-	// Customers with a billing profile use billing_profiles.isolir_day from the DB query directly.
-	defaultIsolirDay := tenant.GracePeriod
+	// defaultIsolirDay = tenant.IsolirDay (days after due date before isolation),
+	// used as fallback for customers without a billing profile. Customers with a
+	// billing profile use billing_profiles.isolir_day from the DB query directly.
+	defaultIsolirDay := tenant.IsolirDay
 
 	invoices, err := h.InvoiceRepo.ListOverdueForIsolir(ctx, p.TenantID, defaultIsolirDay)
 	if err != nil {

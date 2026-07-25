@@ -46,6 +46,7 @@ func (h *UserHandler) List(c *fiber.Ctx) error {
 
 func (h *UserHandler) Create(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
+	actorRole, _ := c.Locals("role").(string)
 
 	var req createUserRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -61,12 +62,13 @@ func (h *UserHandler) Create(c *fiber.Ctx) error {
 	}
 
 	user, err := h.userService.Create(c.Context(), service.CreateUserInput{
-		TenantID: tenantID,
-		Name:     req.Name,
-		Email:    req.Email,
-		Password: req.Password,
-		Role:     req.Role,
-		Phone:    req.Phone,
+		TenantID:  tenantID,
+		Name:      req.Name,
+		Email:     req.Email,
+		Password:  req.Password,
+		Role:      req.Role,
+		Phone:     req.Phone,
+		ActorRole: actorRole,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrUserEmailExists) {
@@ -74,6 +76,9 @@ func (h *UserHandler) Create(c *fiber.Ctx) error {
 		}
 		if errors.Is(err, service.ErrInvalidRole) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrCannotAssignOwner) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat pengguna"})
 	}
@@ -84,6 +89,7 @@ func (h *UserHandler) Create(c *fiber.Ctx) error {
 func (h *UserHandler) Update(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 	currentUserID, _ := c.Locals("user_id").(string)
+	actorRole, _ := c.Locals("role").(string)
 	userID := c.Params("id")
 
 	var req updateUserRequest
@@ -109,10 +115,14 @@ func (h *UserHandler) Update(c *fiber.Ctx) error {
 		Phone:       req.Phone,
 		IsActive:    req.IsActive,
 		Password:    req.Password,
+		ActorRole:   actorRole,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrCannotAssignOwner) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 		}
 		if errors.Is(err, service.ErrUserEmailExists) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})

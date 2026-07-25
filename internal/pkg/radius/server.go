@@ -14,6 +14,7 @@ import (
 	"layeh.com/radius/rfc2759"
 	"layeh.com/radius/rfc2865"
 	"layeh.com/radius/rfc2866"
+	"layeh.com/radius/rfc2869"
 	"layeh.com/radius/vendors/microsoft"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
@@ -443,6 +444,9 @@ func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, v
 		now := time.Now()
 		expiresAt := now.Add(time.Duration(voucher.Product.Duration) * 24 * time.Hour)
 		_ = s.voucherRepo.Activate(r.Context(), voucher.ID, now, expiresAt)
+		// Reflect expiry in-memory so the Session-Timeout below is set on THIS
+		// first session (Activate only persists it to the DB).
+		voucher.ExpiresAt = &expiresAt
 		log.Printf("RADIUS voucher auto-activated: voucher=%s expires=%s", username, expiresAt.Format(time.RFC3339))
 	}
 
@@ -506,16 +510,21 @@ func (s *Server) handleAccounting(w radius.ResponseWriter, r *radius.Request) {
 		_ = s.routerRepo.UpdateNASIP(ctx, router.ID, ip)
 	}
 
+	// Octet counters are 32-bit in RADIUS; the high 32 bits are carried in the
+	// Gigawords attributes. Combine them so sessions >4 GB aren't truncated.
+	totalIn := int64(rfc2869.AcctInputGigawords_Get(r.Packet))<<32 + int64(inputOctets)
+	totalOut := int64(rfc2869.AcctOutputGigawords_Get(r.Packet))<<32 + int64(outputOctets)
+
 	switch acctType {
 	case rfc2866.AcctStatusType_Value_Start:
 		s.handleAcctStart(ctx, username, sessionID, nasIP.String(), framedIP.String(), callerID)
 
 	case rfc2866.AcctStatusType_Value_InterimUpdate:
-		s.handleAcctInterim(ctx, username, sessionID, nasIP.String(), framedIP.String(), callerID, uint32(inputOctets), uint32(outputOctets), uint32(sessionTime))
+		s.handleAcctInterim(ctx, username, sessionID, nasIP.String(), framedIP.String(), callerID, totalIn, totalOut, uint32(sessionTime))
 
 	case rfc2866.AcctStatusType_Value_Stop:
 		terminateCause := rfc2866.AcctTerminateCause_Get(r.Packet)
-		s.handleAcctStop(ctx, username, sessionID, terminateCause.String(), uint32(inputOctets), uint32(outputOctets), uint32(sessionTime))
+		s.handleAcctStop(ctx, username, sessionID, terminateCause.String(), totalIn, totalOut, uint32(sessionTime))
 	}
 
 	// Always respond with Accounting-Response
@@ -588,7 +597,7 @@ func (s *Server) handleAcctStart(ctx context.Context, username, sessionID, nasIP
 	log.Printf("RADIUS ACCT START: session=%s user=%s nas=%s ip=%s", sessionID, username, nasIP, framedIP)
 }
 
-func (s *Server) handleAcctInterim(ctx context.Context, username, sessionID, nasIP, framedIP, callerID string, inputOctets, outputOctets, sessionTime uint32) {
+func (s *Server) handleAcctInterim(ctx context.Context, username, sessionID, nasIP, framedIP, callerID string, inputOctets, outputOctets int64, sessionTime uint32) {
 	prev, err := s.sessionRepo.UpdateUsage(ctx, sessionID, inputOctets, outputOctets, sessionTime)
 	if err != nil {
 		// Session not found as active — re-create it (e.g. after VPS reboot)
@@ -603,15 +612,15 @@ func (s *Server) handleAcctInterim(ctx context.Context, username, sessionID, nas
 	}
 
 	// Compute delta bytes and interval for bandwidth sample
-	deltaIn := int64(inputOctets) - prev.PrevInput
-	deltaOut := int64(outputOctets) - prev.PrevOutput
+	deltaIn := inputOctets - prev.PrevInput
+	deltaOut := outputOctets - prev.PrevOutput
 	deltaSec := int(sessionTime) - prev.PrevSessionTime
 
 	if deltaIn < 0 {
-		deltaIn = int64(inputOctets)
+		deltaIn = inputOctets
 	}
 	if deltaOut < 0 {
-		deltaOut = int64(outputOctets)
+		deltaOut = outputOctets
 	}
 
 	if deltaSec > 0 {
@@ -625,7 +634,7 @@ func (s *Server) handleAcctInterim(ctx context.Context, username, sessionID, nas
 	// INTERIM log removed — too noisy (called every ~60s per active session)
 }
 
-func (s *Server) handleAcctStop(ctx context.Context, username, sessionID, terminateCause string, inputOctets, outputOctets, sessionTime uint32) {
+func (s *Server) handleAcctStop(ctx context.Context, username, sessionID, terminateCause string, inputOctets, outputOctets int64, sessionTime uint32) {
 	if err := s.sessionRepo.EndSession(ctx, sessionID, terminateCause, inputOctets, outputOctets, sessionTime); err != nil {
 		log.Printf("RADIUS ACCT STOP ERROR: session=%s err=%v", sessionID, err)
 		return

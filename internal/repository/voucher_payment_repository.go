@@ -16,6 +16,7 @@ type VoucherPaymentRepository interface {
 	Create(ctx context.Context, payment *model.VoucherPayment) error
 	FindByID(ctx context.Context, tenantID, paymentID string) (*model.VoucherPayment, error)
 	FindByGatewayTrxID(ctx context.Context, gatewayTrxID string) (*model.VoucherPayment, error)
+	FindByGatewayTrxIDForTenant(ctx context.Context, tenantID, gatewayTrxID string) (*model.VoucherPayment, error)
 	UpdateStatus(ctx context.Context, paymentID, status string) error
 	List(ctx context.Context, tenantID string, filter VoucherPaymentFilter) ([]model.VoucherPayment, int, error)
 }
@@ -79,6 +80,29 @@ func (r *voucherPaymentRepository) FindByGatewayTrxID(ctx context.Context, gatew
 		FROM voucher_payments
 		WHERE gateway_trx_id = $1
 	`, gatewayTrxID).Scan(
+		&p.ID, &p.TenantID, &p.VoucherID, &p.BuyerName, &p.BuyerPhone,
+		&p.Amount, &p.Gateway, &p.GatewayTrxID, &p.Status, &p.PaidAt, &p.CreatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+// FindByGatewayTrxIDForTenant scopes the lookup to one tenant — gateway trx IDs
+// are a per-tenant date+sequence and are not globally unique, so a webhook must
+// match within the tenant it authenticated as.
+func (r *voucherPaymentRepository) FindByGatewayTrxIDForTenant(ctx context.Context, tenantID, gatewayTrxID string) (*model.VoucherPayment, error) {
+	var p model.VoucherPayment
+	err := r.db.QueryRow(ctx, `
+		SELECT id, tenant_id, voucher_id, COALESCE(buyer_name,''), buyer_phone,
+		       amount, gateway, COALESCE(gateway_trx_id,''), status, paid_at, created_at
+		FROM voucher_payments
+		WHERE gateway_trx_id = $1 AND tenant_id = $2
+	`, gatewayTrxID, tenantID).Scan(
 		&p.ID, &p.TenantID, &p.VoucherID, &p.BuyerName, &p.BuyerPhone,
 		&p.Amount, &p.Gateway, &p.GatewayTrxID, &p.Status, &p.PaidAt, &p.CreatedAt,
 	)

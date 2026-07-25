@@ -22,8 +22,8 @@ type InterimResult struct {
 
 type SessionRepository interface {
 	Create(ctx context.Context, session *model.RadiusSession) error
-	UpdateUsage(ctx context.Context, sessionID string, inputOctets, outputOctets uint32, sessionTime uint32) (*InterimResult, error)
-	EndSession(ctx context.Context, sessionID string, terminateCause string, inputOctets, outputOctets uint32, sessionTime uint32) error
+	UpdateUsage(ctx context.Context, sessionID string, inputOctets, outputOctets int64, sessionTime uint32) (*InterimResult, error)
+	EndSession(ctx context.Context, sessionID string, terminateCause string, inputOctets, outputOctets int64, sessionTime uint32) error
 	FindActiveByUsername(ctx context.Context, tenantID, username string) (*model.RadiusSession, error)
 	ListByRouter(ctx context.Context, tenantID, routerID string, activeOnly bool, page, perPage int) ([]model.RadiusSession, int, error)
 	ListByCustomer(ctx context.Context, tenantID, customerID string, page, perPage int) ([]model.RadiusSession, int, error)
@@ -62,7 +62,7 @@ func (r *sessionRepository) Create(ctx context.Context, session *model.RadiusSes
 	return err
 }
 
-func (r *sessionRepository) UpdateUsage(ctx context.Context, sessionID string, inputOctets, outputOctets uint32, sessionTime uint32) (*InterimResult, error) {
+func (r *sessionRepository) UpdateUsage(ctx context.Context, sessionID string, inputOctets, outputOctets int64, sessionTime uint32) (*InterimResult, error) {
 	// CTE captures old values before the UPDATE applies
 	query := `
 		WITH old AS (
@@ -77,7 +77,7 @@ func (r *sessionRepository) UpdateUsage(ctx context.Context, sessionID string, i
 	`
 
 	var res InterimResult
-	err := r.db.QueryRow(ctx, query, int64(inputOctets), int64(outputOctets), int(sessionTime), sessionID).Scan(
+	err := r.db.QueryRow(ctx, query, inputOctets, outputOctets, int(sessionTime), sessionID).Scan(
 		&res.TenantID, &res.CustomerID, &res.PrevInput, &res.PrevOutput, &res.PrevSessionTime,
 	)
 	if err != nil {
@@ -86,7 +86,7 @@ func (r *sessionRepository) UpdateUsage(ctx context.Context, sessionID string, i
 	return &res, nil
 }
 
-func (r *sessionRepository) EndSession(ctx context.Context, sessionID string, terminateCause string, inputOctets, outputOctets uint32, sessionTime uint32) error {
+func (r *sessionRepository) EndSession(ctx context.Context, sessionID string, terminateCause string, inputOctets, outputOctets int64, sessionTime uint32) error {
 	now := time.Now()
 	query := `
 		UPDATE radius_sessions
@@ -94,7 +94,7 @@ func (r *sessionRepository) EndSession(ctx context.Context, sessionID string, te
 		    input_octets = $3, output_octets = $4, session_time = $5, updated_at = $1
 		WHERE session_id = $6 AND status = 'active'
 	`
-	_, err := r.db.Exec(ctx, query, now, terminateCause, int64(inputOctets), int64(outputOctets), int(sessionTime), sessionID)
+	_, err := r.db.Exec(ctx, query, now, terminateCause, inputOctets, outputOctets, int(sessionTime), sessionID)
 	return err
 }
 

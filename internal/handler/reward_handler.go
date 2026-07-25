@@ -100,26 +100,6 @@ func (h *RewardHandler) ListRewards(c *fiber.Ctx) error {
 
 // Referral
 
-func (h *RewardHandler) CreateReferral(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-
-	var req model.Referral
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
-	}
-	req.TenantID = tenantID
-
-	if req.ReferrerID == "" || req.ReferredID == "" || req.RewardID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID perujuk, ID yang dirujuk, dan ID reward wajib diisi"})
-	}
-
-	if err := h.rewardService.CreateReferral(c.Context(), &req); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat referral"})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": req})
-}
-
 func (h *RewardHandler) GetReferral(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 	referralID := c.Params("id")
@@ -171,26 +151,6 @@ func (h *RewardHandler) MarkRewarded(c *fiber.Ctx) error {
 }
 
 // Claims
-
-func (h *RewardHandler) CreateClaim(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-
-	var req model.RewardClaim
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
-	}
-	req.TenantID = tenantID
-
-	if req.CustomerID == "" || req.RewardID == "" || req.Amount <= 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID pelanggan, ID reward, dan jumlah wajib diisi"})
-	}
-
-	if err := h.rewardService.CreateClaim(c.Context(), &req); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat klaim"})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": req})
-}
 
 func (h *RewardHandler) ListClaims(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)

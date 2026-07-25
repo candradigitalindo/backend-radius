@@ -91,59 +91,6 @@ func (h *IsolirPageHandler) GetPage(c *fiber.Ctx) error {
 	return c.SendString(page)
 }
 
-// GetConfig returns the isolir page configuration for admin editing.
-// GET /v1/settings/isolir-page
-func (h *IsolirPageHandler) GetConfig(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-
-	settings, _ := h.settingService.GetAsMap(c.Context(), tenantID)
-
-	config := map[string]string{
-		"isolir_page_title":         getOrDefault(settings, "isolir_page_title", "Akun Anda Terisolir"),
-		"isolir_page_message":       getOrDefault(settings, "isolir_page_message", "Layanan internet Anda sementara dinonaktifkan karena tagihan belum dibayar."),
-		"isolir_page_bg_color":      getOrDefault(settings, "isolir_page_bg_color", "#f8d7da"),
-		"isolir_page_text_color":    getOrDefault(settings, "isolir_page_text_color", "#721c24"),
-		"isolir_page_logo":          getOrDefault(settings, "isolir_page_logo", ""),
-		"isolir_page_contact_phone": getOrDefault(settings, "isolir_page_contact_phone", ""),
-		"isolir_page_contact_wa":    getOrDefault(settings, "isolir_page_contact_wa", ""),
-		"isolir_page_payment_url":   getOrDefault(settings, "isolir_page_payment_url", ""),
-		"isolir_page_custom_css":    getOrDefault(settings, "isolir_page_custom_css", ""),
-		"isolir_page_custom_html":   getOrDefault(settings, "isolir_page_custom_html", ""),
-		"isolir_page_dark_mode":     getOrDefault(settings, "isolir_page_dark_mode", "auto"),
-	}
-
-	return c.JSON(fiber.Map{"data": config})
-}
-
-// UpdateConfig bulk-updates the isolir page settings.
-// PUT /v1/settings/isolir-page
-func (h *IsolirPageHandler) UpdateConfig(c *fiber.Ctx) error {
-	tenantID, _ := c.Locals("tenant_id").(string)
-
-	var req map[string]string
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
-	}
-
-	// Only allow isolir_page_ prefixed keys
-	allowed := make(map[string]string)
-	for k, v := range req {
-		if len(k) > 12 && k[:12] == "isolir_page_" {
-			allowed[k] = v
-		}
-	}
-
-	if len(allowed) == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Tidak ada pengaturan yang valid"})
-	}
-
-	if err := h.settingService.BulkSet(c.Context(), tenantID, allowed); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui pengaturan"})
-	}
-
-	return c.JSON(fiber.Map{"message": "Pengaturan halaman isolir diperbarui"})
-}
-
 func getOrDefault(m map[string]string, key, def string) string {
 	if v, ok := m[key]; ok && v != "" {
 		return v

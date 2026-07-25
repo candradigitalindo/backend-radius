@@ -20,7 +20,10 @@ type InvoiceRepository interface {
 	FindCurrentByCustomer(ctx context.Context, tenantID, customerID string) (*model.Invoice, error)
 	Update(ctx context.Context, invoice *model.Invoice) error
 	UpdateStatus(ctx context.Context, tenantID, invoiceID, status string) error
-	MarkPaid(ctx context.Context, invoice *model.Invoice) error
+	// MarkPaid transitions the invoice to paid only if it isn't already paid.
+	// Returns true when THIS call performed the transition, so callers can run
+	// post-payment automations exactly once even under concurrent webhooks.
+	MarkPaid(ctx context.Context, invoice *model.Invoice) (bool, error)
 	Delete(ctx context.Context, tenantID, invoiceID string) error
 	List(ctx context.Context, tenantID string, filter InvoiceFilter) ([]model.Invoice, int, error)
 	ListByCustomer(ctx context.Context, tenantID, customerID string, page, perPage int) ([]model.Invoice, int, error)
@@ -210,13 +213,16 @@ func (r *invoiceRepository) UpdateStatus(ctx context.Context, tenantID, invoiceI
 	return err
 }
 
-func (r *invoiceRepository) MarkPaid(ctx context.Context, invoice *model.Invoice) error {
-	_, err := r.db.Exec(ctx, `
+func (r *invoiceRepository) MarkPaid(ctx context.Context, invoice *model.Invoice) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
 		UPDATE invoices SET
 			status = 'paid', paid_at = NOW(), paid_amount = $1, payment_method = $2, updated_at = NOW()
-		WHERE id = $3 AND tenant_id = $4
+		WHERE id = $3 AND tenant_id = $4 AND status != 'paid'
 	`, invoice.PaidAmount, invoice.PaymentMethod, invoice.ID, invoice.TenantID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *invoiceRepository) Delete(ctx context.Context, tenantID, invoiceID string) error {

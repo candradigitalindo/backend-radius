@@ -161,29 +161,6 @@ func (c *TripayClient) TestConnection(ctx context.Context) error {
 	return nil
 }
 
-// GetTransaction retrieves the status of a transaction by Tripay reference.
-func (c *TripayClient) GetTransaction(ctx context.Context, reference string) (*TransactionStatusResponse, error) {
-	url := fmt.Sprintf("%s/transaction/detail?reference=%s", c.baseURL, reference)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("tripay get transaction: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result TransactionStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("tripay decode response: %w", err)
-	}
-	return &result, nil
-}
-
 // VerifyCallbackSignature validates the X-Callback-Signature header that Tripay
 // sends with every callback request. Tripay computes the signature as
 // HMAC-SHA256 over the *entire raw JSON request body* using the merchant private

@@ -201,10 +201,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-func (c *Config) IsProduction() bool {
-	return c.App.Env == "production"
-}
-
 func (c *Config) DSN() string {
 	u := &url.URL{
 		Scheme:   "postgres",
