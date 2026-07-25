@@ -122,7 +122,7 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		       COALESCE(c.referral_code,''), c.created_at, c.updated_at, c.reseller_id,
 		       p.id, p.name, p.bandwidth_up, p.bandwidth_down, p.price,
 		       p.burst_limit, p.address_list,
-		       rt.id, rt.name, rt.vpn_ip, rt.radius_secret, rt.coa_port,
+		       rt.id, rt.name, rt.vpn_ip, COALESCE(rt.vpn_public_key,''), COALESCE(rt.nas_ip,''), rt.radius_secret, rt.coa_port,
 		       EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active') AS is_online
 		FROM customers c
 		LEFT JOIN packages p ON c.package_id = p.id
@@ -136,7 +136,7 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 	var pkgJoinID, pkgName, pkgBurstLimit, pkgAddressList *string
 	var pkgBandwidthUp, pkgBandwidthDown *int
 	var pkgPrice *int64
-	var rtJoinID, rtName, rtVPNIP, rtRADIUSSecret *string
+	var rtJoinID, rtName, rtVPNIP, rtWGKey, rtNASIP, rtRADIUSSecret *string
 	var rtCoAPort *int
 	var isOnline bool
 
@@ -152,7 +152,7 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		&c.ReferralCode, &c.CreatedAt, &c.UpdatedAt, &c.ResellerID,
 		&pkgJoinID, &pkgName, &pkgBandwidthUp, &pkgBandwidthDown, &pkgPrice,
 		&pkgBurstLimit, &pkgAddressList,
-		&rtJoinID, &rtName, &rtVPNIP, &rtRADIUSSecret, &rtCoAPort,
+		&rtJoinID, &rtName, &rtVPNIP, &rtWGKey, &rtNASIP, &rtRADIUSSecret, &rtCoAPort,
 		&isOnline,
 	)
 	if err != nil {
@@ -202,6 +202,12 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		}
 		if rtVPNIP != nil {
 			c.Router.VPNIP = *rtVPNIP
+		}
+		if rtWGKey != nil {
+			c.Router.VPNPublicKey = *rtWGKey
+		}
+		if rtNASIP != nil {
+			c.Router.NASIP = *rtNASIP
 		}
 		if rtRADIUSSecret != nil {
 			c.Router.RADIUSSecret = *rtRADIUSSecret
@@ -425,7 +431,7 @@ func (r *customerRepository) FindByPPPoEUsername(ctx context.Context, tenantID, 
 		       c.package_id, c.router_id, c.status, c.isolated_at,
 		       p.id, p.name, p.bandwidth_up, p.bandwidth_down, p.price,
 		       p.burst_limit, p.address_list, p.is_active,
-		       rt.id, rt.vpn_ip, rt.radius_secret, rt.coa_port
+		       rt.id, rt.vpn_ip, COALESCE(rt.vpn_public_key,''), COALESCE(rt.nas_ip,''), rt.radius_secret, rt.coa_port
 		FROM customers c
 		LEFT JOIN packages p ON c.package_id = p.id
 		LEFT JOIN routers rt ON c.router_id = rt.id
@@ -433,7 +439,7 @@ func (r *customerRepository) FindByPPPoEUsername(ctx context.Context, tenantID, 
 		LIMIT 1
 	`
 	var c model.Customer
-	var pkgID, rtID, pkgName, pkgBurstLimit, pkgAddressList, rtVPNIP, rtSecret *string
+	var pkgID, rtID, pkgName, pkgBurstLimit, pkgAddressList, rtVPNIP, rtWGKey, rtNASIP, rtSecret *string
 	var pkgBandwidthUp, pkgBandwidthDown, rtCoAPort *int
 	var pkgPrice *int64
 	var pkgIsActive *bool
@@ -445,7 +451,7 @@ func (r *customerRepository) FindByPPPoEUsername(ctx context.Context, tenantID, 
 		&pID, &rID, &c.Status, &c.IsolatedAt,
 		&pkgID, &pkgName, &pkgBandwidthUp, &pkgBandwidthDown, &pkgPrice,
 		&pkgBurstLimit, &pkgAddressList, &pkgIsActive,
-		&rtID, &rtVPNIP, &rtSecret, &rtCoAPort,
+		&rtID, &rtVPNIP, &rtWGKey, &rtNASIP, &rtSecret, &rtCoAPort,
 	)
 	if err != nil {
 		return nil, err
@@ -456,7 +462,7 @@ func (r *customerRepository) FindByPPPoEUsername(ctx context.Context, tenantID, 
 		c.Package = &model.Package{ID: *pkgID, Name: *pkgName, BandwidthUp: *pkgBandwidthUp, BandwidthDown: *pkgBandwidthDown, Price: *pkgPrice, BurstLimit: *pkgBurstLimit, AddressList: *pkgAddressList, IsActive: *pkgIsActive}
 	}
 	if rID != nil && rtID != nil {
-		c.Router = &model.Router{ID: *rtID, VPNIP: *rtVPNIP, RADIUSSecret: *rtSecret, CoAPort: *rtCoAPort}
+		c.Router = &model.Router{ID: *rtID, VPNIP: *rtVPNIP, VPNPublicKey: *rtWGKey, NASIP: *rtNASIP, RADIUSSecret: *rtSecret, CoAPort: *rtCoAPort}
 	}
 	return &c, nil
 }

@@ -33,14 +33,16 @@ type Router struct {
 // Direct (IP Publik) routers on their last-known WAN IP (nas_ip). This makes
 // outbound RADIUS work the same whether or not a VPN tunnel is used.
 func (r *Router) CoAAddress() string {
-	if r.VPNIP != "" {
+	if r.UsesVPN() {
 		return r.VPNIP
 	}
 	return r.NASIP
 }
 
 // UsesVPN reports whether the router is operating over a WireGuard tunnel.
-func (r *Router) UsesVPN() bool { return r.VPNIP != "" }
+// Every router gets a vpn_ip pre-allocated at creation, so the reliable marker
+// of an actually-established tunnel is a registered WireGuard public key.
+func (r *Router) UsesVPN() bool { return r.VPNPublicKey != "" }
 
 type RouterConnectionLog struct {
 	ID          string    `json:"id"`
