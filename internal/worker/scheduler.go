@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/candrasyahputra/radius-server/internal/repository"
 )
@@ -99,9 +100,9 @@ func SetupScheduler(scheduler *asynq.Scheduler, tenantRepo repository.TenantRepo
 	return nil
 }
 
-func RegisterSchedulerHandlers(mux *asynq.ServeMux, tenantRepo repository.TenantRepository, client *asynq.Client) {
+func RegisterSchedulerHandlers(mux *asynq.ServeMux, tenantRepo repository.TenantRepository, client *asynq.Client, rdb *redis.Client) {
 	mux.HandleFunc("scheduler:generate_invoices_all", func(ctx context.Context, t *asynq.Task) error {
-		return enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
+		err := enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
 			month, year := invoiceTargetPeriod(time.Now())
 			return NewGenerateInvoicesTask(GenerateInvoicesPayload{
 				TenantID: tenantID,
@@ -110,24 +111,40 @@ func RegisterSchedulerHandlers(mux *asynq.ServeMux, tenantRepo repository.Tenant
 				DueDay:   dueDay,
 			})
 		})
+		if err == nil {
+			MarkDailyRun(ctx, rdb, t.Type())
+		}
+		return err
 	})
 
 	mux.HandleFunc("scheduler:auto_isolir_all", func(ctx context.Context, t *asynq.Task) error {
-		return enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
+		err := enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
 			return NewAutoIsolirTask(AutoIsolirPayload{TenantID: tenantID})
 		})
+		if err == nil {
+			MarkDailyRun(ctx, rdb, t.Type())
+		}
+		return err
 	})
 
 	mux.HandleFunc("scheduler:trigger_reminders_all", func(ctx context.Context, t *asynq.Task) error {
-		return enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
+		err := enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, billingCycle, dueDay int) (*asynq.Task, error) {
 			return NewTriggerRemindersTask(TriggerRemindersPayload{TenantID: tenantID})
 		})
+		if err == nil {
+			MarkDailyRun(ctx, rdb, t.Type())
+		}
+		return err
 	})
 
 	mux.HandleFunc("scheduler:grace_period_check_all", func(ctx context.Context, t *asynq.Task) error {
-		return enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, _, _ int) (*asynq.Task, error) {
+		err := enqueueForAllTenants(ctx, tenantRepo, client, func(tenantID string, _, _ int) (*asynq.Task, error) {
 			return NewGracePeriodCheckTask(GracePeriodCheckPayload{TenantID: tenantID})
 		})
+		if err == nil {
+			MarkDailyRun(ctx, rdb, t.Type())
+		}
+		return err
 	})
 
 	mux.HandleFunc("scheduler:router_monitor_all", func(ctx context.Context, t *asynq.Task) error {

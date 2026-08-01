@@ -10,6 +10,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/repository"
@@ -39,6 +40,7 @@ type Handlers struct {
 	ONTRepo             repository.ONTRepository
 	SubscriptionRepo    repository.SubscriptionRepository
 	NotificationService *service.NotificationService
+	RDB                 *redis.Client
 }
 
 // genieACSReady reports whether the ONT workers should run: GenieACS is either
@@ -614,6 +616,7 @@ func (h *Handlers) HandleSubscriptionExpiryCheck(ctx context.Context, t *asynq.T
 		return fmt.Errorf("sub expiry check: list expiring: %w", err)
 	}
 	if len(tenants) == 0 {
+		MarkDailyRun(ctx, h.RDB, TaskSubExpiryCheck)
 		return nil
 	}
 
@@ -665,5 +668,6 @@ func (h *Handlers) HandleSubscriptionExpiryCheck(ctx context.Context, t *asynq.T
 	if sent > 0 {
 		log.Printf("[worker] sub-expiry-check: sent %d notifications", sent)
 	}
+	MarkDailyRun(ctx, h.RDB, TaskSubExpiryCheck)
 	return nil
 }

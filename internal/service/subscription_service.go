@@ -381,6 +381,7 @@ func (s *SubscriptionService) AdminUpdateOrder(ctx context.Context, orderID stri
 				expiresAt = startsAt.AddDate(0, order.DurationMonths, 0)
 			}
 			_ = s.activatePlan(ctx, order.TenantID, plan, &startsAt, &expiresAt)
+			go s.sendPaymentConfirmationWA(order, plan, &expiresAt)
 		}
 	}
 

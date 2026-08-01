@@ -106,6 +106,7 @@ func main() {
 		ONTRepo:             ontRepo,
 		SubscriptionRepo:    subscriptionRepo,
 		NotificationService: notificationService,
+		RDB:                 rdb,
 	}
 
 	// Asynq server
@@ -127,7 +128,7 @@ func main() {
 	// Mux
 	mux := asynq.NewServeMux()
 	handlers.Register(mux)
-	worker.RegisterSchedulerHandlers(mux, tenantRepo, client)
+	worker.RegisterSchedulerHandlers(mux, tenantRepo, client, rdb)
 
 	// Scheduler
 	loc, err := time.LoadLocation("Asia/Jakarta")
@@ -156,6 +157,11 @@ func main() {
 	if err := worker.SetupScheduler(scheduler, tenantRepo, schedulerCfg); err != nil {
 		log.Fatalf("Failed to setup scheduler: %v", err)
 	}
+
+	// Cron harian (isolir/invoice/reminder/dll) tidak di-catch-up oleh asynq
+	// sendiri kalau container down/restart tepat di jam jadwalnya — jalankan
+	// sekali di awal untuk menangkap jadwal hari ini yang terlewat.
+	worker.RunCatchUp(context.Background(), rdb, client, schedulerCfg)
 
 	go func() {
 		if err := scheduler.Run(); err != nil {
