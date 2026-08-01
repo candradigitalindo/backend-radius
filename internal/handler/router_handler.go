@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -18,6 +22,36 @@ type RouterHandler struct {
 
 func NewRouterHandler(routerService *service.RouterService) *RouterHandler {
 	return &RouterHandler{routerService: routerService}
+}
+
+// parseRouterPush decodes body dari router (heartbeat / interface-stats) sebagai
+// JSON tanpa melihat header Content-Type. RouterOS 6 /tool fetch tetap mengirim
+// Content-Type bawaannya sendiri walau script sudah menyetel
+// "Content-Type: application/json", sehingga BodyParser memakai decoder yang
+// salah dan semua push dari ROS 6 tertolak 400.
+//
+// Log kegagalan parse di-rate-limit: router rusak yang push tiap 5 detik akan
+// membanjiri log (±17 ribu baris/hari) tanpa ini.
+var (
+	parsePushLogMu   sync.Mutex
+	parsePushLastLog time.Time
+)
+
+func parseRouterPush(c *fiber.Ctx, out interface{}) error {
+	if err := json.Unmarshal(c.Body(), out); err != nil {
+		parsePushLogMu.Lock()
+		if time.Since(parsePushLastLog) > 30*time.Second {
+			parsePushLastLog = time.Now()
+			body := c.Body()
+			if len(body) > 300 {
+				body = body[:300]
+			}
+			log.Printf("router push parse error from %s ct=%q body=%q", c.IP(), c.Get("Content-Type"), body)
+		}
+		parsePushLogMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (h *RouterHandler) routerResponse(router interface{}) fiber.Map {
@@ -114,7 +148,7 @@ func (h *RouterHandler) PushInterfaceStats(c *fiber.Ctx) error {
 		Token      string                   `json:"token"`
 		Interfaces []service.IfaceStatInput `json:"interfaces"`
 	}
-	if err := c.BodyParser(&req); err != nil {
+	if err := parseRouterPush(c, &req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
 	}
 	if req.Token == "" {
@@ -239,7 +273,7 @@ func (h *RouterHandler) RegenerateToken(c *fiber.Ctx) error {
 
 func (h *RouterHandler) Heartbeat(c *fiber.Ctx) error {
 	var req heartbeatRequest
-	if err := c.BodyParser(&req); err != nil {
+	if err := parseRouterPush(c, &req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Format request tidak valid"})
 	}
 	if req.Token == "" {
@@ -350,6 +384,21 @@ func (h *RouterHandler) RegisterVPNKey(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Public key WireGuard wajib diisi"})
 	}
 	router, err := h.routerService.RegisterVPNKey(c.Context(), tenantID, routerID, req.PublicKey)
+	if err != nil {
+		if errors.Is(err, service.ErrRouterNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(h.routerResponse(router))
+}
+
+// EnableLegacyVPN provisions L2TP/SSTP tunnel credentials (RouterOS 6 / router
+// di belakang NAT). Idempotent — memanggil ulang mengembalikan kredensial yang sama.
+func (h *RouterHandler) EnableLegacyVPN(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	routerID := c.Params("id")
+	router, err := h.routerService.EnableLegacyVPN(c.Context(), tenantID, routerID)
 	if err != nil {
 		if errors.Is(err, service.ErrRouterNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})

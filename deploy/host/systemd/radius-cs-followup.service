@@ -1,0 +1,9 @@
+[Unit]
+Description=Follow-up calon pelanggan CS bot D Radius (n8n)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# DRY_RUN=0 = mode live (kirim WA). Ganti ke 1 untuk simulasi.
+ExecStart=/usr/bin/docker exec -e DRY_RUN=0 radius_n8n node --experimental-sqlite /home/node/.n8n/cs-followup.js

@@ -21,6 +21,9 @@ type VPNPeerInfo struct {
 type RouterRepository interface {
 	FindByVPNIP(ctx context.Context, vpnIP string) (*model.Router, error)
 	ListAllVPNIPs(ctx context.Context) ([]string, error)
+	ListLegacyVPNAccounts(ctx context.Context) ([]LegacyVPNAccount, error)
+	ListAllLegacyVPNIPs(ctx context.Context) ([]string, error)
+	SetLegacyVPN(ctx context.Context, tenantID, routerID, password, ip string) error
 	ListVPNPeers(ctx context.Context) ([]VPNPeerInfo, error)
 	Create(ctx context.Context, router *model.Router) error
 	FindByID(ctx context.Context, tenantID, routerID string) (*model.Router, error)
@@ -95,6 +98,7 @@ func (r *routerRepository) Create(ctx context.Context, router *model.Router) err
 func (r *routerRepository) FindByID(ctx context.Context, tenantID, routerID string) (*model.Router, error) {
 	query := `
 		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
+		       COALESCE(vpn_password,''), COALESCE(legacy_vpn_ip,''),
 		       radius_secret, coa_port, COALESCE(heartbeat_token,''),
 		       is_online, last_seen_at, router_os_ver, board_name, uptime,
 		       cpu_load, free_memory, total_memory, snmp_community, COALESCE(nas_ip,''),
@@ -108,6 +112,7 @@ func (r *routerRepository) FindByID(ctx context.Context, tenantID, routerID stri
 	err := r.db.QueryRow(ctx, query, routerID, tenantID).Scan(
 		&rt.ID, &rt.TenantID, &rt.Name, &rt.RouterType, &rt.Identity,
 		&rt.VPNIP, &rt.VPNPublicKey,
+		&rt.VPNPassword, &rt.LegacyVPNIP,
 		&rt.RADIUSSecret, &rt.CoAPort, &rt.HeartbeatToken,
 		&rt.IsOnline, &rt.LastSeenAt, &rt.RouterOSVer, &rt.BoardName, &rt.Uptime,
 		&rt.CPULoad, &rt.FreeMemory, &rt.TotalMemory, &rt.SNMPCommunity, &rt.NASIP,
@@ -283,7 +288,7 @@ func (r *routerRepository) FindByHeartbeatToken(ctx context.Context, token strin
 func (r *routerRepository) FindByIDOnly(ctx context.Context, routerID string) (*model.Router, error) {
 	query := `
 		SELECT id, tenant_id, name, COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
-		       radius_secret, coa_port, is_online, last_seen_at,
+		       COALESCE(legacy_vpn_ip,''), radius_secret, coa_port, is_online, last_seen_at,
 		       router_os_ver, board_name, uptime, cpu_load, free_memory, total_memory, snmp_community
 		FROM routers
 		WHERE id = $1
@@ -293,7 +298,7 @@ func (r *routerRepository) FindByIDOnly(ctx context.Context, routerID string) (*
 	var rt model.Router
 	err := r.db.QueryRow(ctx, query, routerID).Scan(
 		&rt.ID, &rt.TenantID, &rt.Name, &rt.Identity,
-		&rt.VPNIP, &rt.VPNPublicKey,
+		&rt.VPNIP, &rt.VPNPublicKey, &rt.LegacyVPNIP,
 		&rt.RADIUSSecret, &rt.CoAPort, &rt.IsOnline, &rt.LastSeenAt,
 		&rt.RouterOSVer, &rt.BoardName, &rt.Uptime, &rt.CPULoad, &rt.FreeMemory, &rt.TotalMemory, &rt.SNMPCommunity,
 	)
@@ -307,24 +312,25 @@ func (r *routerRepository) FindByIDOnly(ctx context.Context, routerID string) (*
 }
 
 // FindByVPNIP resolves the registered router that a RADIUS packet came from,
-// by its source/NAS IP. It matches either the WireGuard VPN IP (VPN mode) or the
-// WAN IP / nas_ip (Direct / IP Publik mode), so authentication works regardless
-// of whether a tunnel is used. An exact VPN-IP match is always preferred so a
-// stale nas_ip can never shadow a live WireGuard router.
+// by its source/NAS IP. It matches the WireGuard VPN IP (VPN mode), the static
+// L2TP/SSTP tunnel IP (legacy VPN mode), or the WAN IP / nas_ip (Direct /
+// IP Publik mode), so authentication works regardless of how the router is
+// connected. Exact tunnel-IP matches are always preferred so a stale nas_ip can
+// never shadow a live tunneled router.
 func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*model.Router, error) {
 	query := `
 		SELECT id, tenant_id, name, COALESCE(router_type,'mikrotik'), COALESCE(identity,''), vpn_ip, COALESCE(vpn_public_key,''),
-		       radius_secret, coa_port, is_online, is_active, COALESCE(nas_ip,'')
+		       COALESCE(legacy_vpn_ip,''), radius_secret, coa_port, is_online, is_active, COALESCE(nas_ip,'')
 		FROM routers
-		WHERE (vpn_ip = $1 OR nas_ip = $1) AND is_active = TRUE
-		ORDER BY (vpn_ip = $1) DESC
+		WHERE (vpn_ip = $1 OR legacy_vpn_ip = $1 OR nas_ip = $1) AND is_active = TRUE
+		ORDER BY (vpn_ip = $1) DESC, (legacy_vpn_ip = $1) DESC
 		LIMIT 1
 	`
 
 	var router model.Router
 	err := r.db.QueryRow(ctx, query, vpnIP).Scan(
 		&router.ID, &router.TenantID, &router.Name, &router.RouterType, &router.Identity,
-		&router.VPNIP, &router.VPNPublicKey, &router.RADIUSSecret,
+		&router.VPNIP, &router.VPNPublicKey, &router.LegacyVPNIP, &router.RADIUSSecret,
 		&router.CoAPort, &router.IsOnline, &router.IsActive, &router.NASIP,
 	)
 	if err != nil {
@@ -334,6 +340,70 @@ func (r *routerRepository) FindByVPNIP(ctx context.Context, vpnIP string) (*mode
 		return nil, err
 	}
 	return &router, nil
+}
+
+// LegacyVPNAccount is one row of the accel-ppp chap-secrets file: the tunnel
+// login (router ID), its password and the static tunnel IP.
+type LegacyVPNAccount struct {
+	RouterID string
+	Password string
+	IP       string
+}
+
+// ListLegacyVPNAccounts returns every active router with provisioned L2TP/SSTP
+// credentials, for regenerating the accel-ppp chap-secrets file.
+func (r *routerRepository) ListLegacyVPNAccounts(ctx context.Context) ([]LegacyVPNAccount, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, COALESCE(vpn_password,''), legacy_vpn_ip
+		FROM routers
+		WHERE legacy_vpn_ip IS NOT NULL AND legacy_vpn_ip != '' AND is_active = TRUE
+		ORDER BY legacy_vpn_ip
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []LegacyVPNAccount
+	for rows.Next() {
+		var a LegacyVPNAccount
+		if err := rows.Scan(&a.RouterID, &a.Password, &a.IP); err != nil {
+			return nil, err
+		}
+		if a.Password != "" {
+			accounts = append(accounts, a)
+		}
+	}
+	return accounts, rows.Err()
+}
+
+// ListAllLegacyVPNIPs returns every allocated L2TP/SSTP tunnel IP (including
+// inactive routers, so a disabled router's IP is never handed to another one).
+func (r *routerRepository) ListAllLegacyVPNIPs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Query(ctx, `SELECT legacy_vpn_ip FROM routers WHERE legacy_vpn_ip IS NOT NULL AND legacy_vpn_ip != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err != nil {
+			return nil, err
+		}
+		ips = append(ips, ip)
+	}
+	return ips, rows.Err()
+}
+
+// SetLegacyVPN stores the generated L2TP/SSTP credentials for a router.
+func (r *routerRepository) SetLegacyVPN(ctx context.Context, tenantID, routerID, password, ip string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE routers SET vpn_password = $1, legacy_vpn_ip = $2, updated_at = NOW()
+		WHERE id = $3 AND tenant_id = $4
+	`, password, ip, routerID, tenantID)
+	return err
 }
 
 // UpdateNASIP saves the router's WAN IP (used in Direct mode without WireGuard).

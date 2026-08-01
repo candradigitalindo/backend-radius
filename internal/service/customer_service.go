@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
@@ -22,6 +23,8 @@ var (
 	ErrCustomerNotFound      = errors.New("Pelanggan tidak ditemukan")
 	ErrCustomerCodeExists    = errors.New("Kode pelanggan sudah ada")
 	ErrPPPoEUsernameExists   = errors.New("Username PPPoE sudah ada")
+	ErrPPPoEUsernameInvalid  = errors.New("Username PPPoE tidak valid: gunakan 3-50 karakter huruf, angka, atau @ . _ - tanpa spasi")
+	ErrPPPoEPasswordInvalid  = errors.New("Password PPPoE tidak valid: gunakan 4-50 karakter tanpa spasi")
 	ErrCustomerAlreadyActive = errors.New("Pelanggan sudah aktif")
 	ErrCustomerNotActive     = errors.New("Pelanggan tidak aktif")
 	ErrCustomerLimitReached  = errors.New("Batas jumlah pelanggan telah tercapai, upgrade paket untuk menambah lebih banyak pelanggan")
@@ -103,6 +106,8 @@ type CreateCustomerInput struct {
 	Latitude         *float64
 	Longitude        *float64
 	ConnectionType   string
+	PPPoEUsername    string // opsional; kosong = digenerate otomatis
+	PPPoEPassword    string // opsional; kosong = digenerate otomatis
 	IPAddress        string
 	PackageID        *string
 	RouterID         *string
@@ -209,11 +214,36 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 		return nil, err
 	}
 
-	pppoeUsername, err := s.generatePPPoEUsername(ctx, input.TenantID, input.Phone)
-	if err != nil {
-		return nil, err
+	// Username/password PPPoE: pakai isian manual bila ada, selain itu generate otomatis.
+	manualUsername := strings.TrimSpace(input.PPPoEUsername)
+	manualPassword := strings.TrimSpace(input.PPPoEPassword)
+	if manualUsername != "" {
+		if !isValidPPPoEUsername(manualUsername) {
+			return nil, ErrPPPoEUsernameInvalid
+		}
+		taken, err := s.isPPPoEUsernameTaken(ctx, manualUsername)
+		if err != nil {
+			return nil, err
+		}
+		if taken {
+			return nil, ErrPPPoEUsernameExists
+		}
 	}
-	pppoePassword := generatePPPoEPassword()
+	if manualPassword != "" && !isValidPPPoEPassword(manualPassword) {
+		return nil, ErrPPPoEPasswordInvalid
+	}
+
+	pppoeUsername := manualUsername
+	if pppoeUsername == "" {
+		pppoeUsername, err = s.generatePPPoEUsername(ctx, input.TenantID, input.Phone)
+		if err != nil {
+			return nil, err
+		}
+	}
+	pppoePassword := manualPassword
+	if pppoePassword == "" {
+		pppoePassword = generatePPPoEPassword()
+	}
 
 	customer := &model.Customer{
 		TenantID:         input.TenantID,
@@ -248,14 +278,17 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 
 	for attempt := 0; attempt < 5; attempt++ {
 		if attempt > 0 {
-			// re-generate code and username on collision retry
+			// re-generate code (and auto username) on collision retry;
+			// username manual tidak boleh diganti diam-diam
 			customer.CustomerCode, err = s.NextCode(ctx, input.TenantID)
 			if err != nil {
 				return nil, err
 			}
-			customer.PPPoEUsername, err = s.generatePPPoEUsername(ctx, input.TenantID, input.Phone)
-			if err != nil {
-				return nil, err
+			if manualUsername == "" {
+				customer.PPPoEUsername, err = s.generatePPPoEUsername(ctx, input.TenantID, input.Phone)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		err = s.customerRepo.Create(ctx, customer)
@@ -808,6 +841,49 @@ func (s *CustomerService) generatePPPoEUsername(ctx context.Context, tenantID, p
 		suffix = fmt.Sprintf("%d", count)
 	}
 	return prefix + suffix, nil
+}
+
+// isValidPPPoEUsername membatasi username manual: 3-50 karakter, huruf/angka/@._- tanpa spasi.
+func isValidPPPoEUsername(username string) bool {
+	if len(username) < 3 || len(username) > 50 {
+		return false
+	}
+	for _, ch := range username {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= '0' && ch <= '9':
+		case ch == '@' || ch == '.' || ch == '_' || ch == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isValidPPPoEPassword membatasi password manual: 4-50 karakter printable ASCII tanpa spasi.
+func isValidPPPoEPassword(password string) bool {
+	if len(password) < 4 || len(password) > 50 {
+		return false
+	}
+	for _, ch := range password {
+		if ch <= ' ' || ch > '~' {
+			return false
+		}
+	}
+	return true
+}
+
+// isPPPoEUsernameTaken cek keunikan global (index customers_pppoe_username_global_key).
+func (s *CustomerService) isPPPoEUsernameTaken(ctx context.Context, username string) (bool, error) {
+	existing, err := s.customerRepo.FindByPPPoEUsernameGlobal(ctx, username)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return existing != nil, nil
 }
 
 func generatePPPoEPassword() string {

@@ -108,6 +108,9 @@ func (m *AuthMiddleware) Handle() fiber.Handler {
 		c.Locals("user_id", sub)
 		c.Locals("tenant_id", tenantID)
 		c.Locals("role", role)
+		if impersonatorID, _ := claims["impersonator_id"].(string); impersonatorID != "" {
+			c.Locals("impersonator_id", impersonatorID)
+		}
 
 		return c.Next()
 	}

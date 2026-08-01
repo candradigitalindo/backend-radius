@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 	"github.com/candrasyahputra/radius-server/internal/service"
 )
@@ -17,6 +18,8 @@ var slugRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type TenantHandler struct {
 	tenantService  *service.TenantService
+	authService    *service.AuthService
+	auditLogRepo   repository.AuditLogRepository
 	webhookBaseURL string
 }
 
@@ -26,6 +29,16 @@ func NewTenantHandler(tenantService *service.TenantService) *TenantHandler {
 
 func (h *TenantHandler) WithWebhookBaseURL(baseURL string) *TenantHandler {
 	h.webhookBaseURL = baseURL
+	return h
+}
+
+func (h *TenantHandler) WithAuthService(authService *service.AuthService) *TenantHandler {
+	h.authService = authService
+	return h
+}
+
+func (h *TenantHandler) WithAuditLogRepo(repo repository.AuditLogRepository) *TenantHandler {
+	h.auditLogRepo = repo
 	return h
 }
 
@@ -357,6 +370,48 @@ func (h *TenantHandler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus tenant"})
 	}
 	return c.JSON(fiber.Map{"message": "Tenant berhasil dihapus"})
+}
+
+// POST /api/v1/tenants/:id/impersonate — superadmin logs in as this tenant's
+// owner to browse the app exactly as the tenant would see it.
+func (h *TenantHandler) Impersonate(c *fiber.Ctx) error {
+	if h.authService == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Layanan autentikasi tidak tersedia"})
+	}
+
+	tenantID := c.Params("id")
+	actorID, _ := c.Locals("user_id").(string)
+
+	resp, err := h.authService.ImpersonateTenant(c.Context(), tenantID, actorID)
+	if err != nil {
+		if errors.Is(err, service.ErrTenantNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if h.auditLogRepo != nil {
+		actorEmail := ""
+		if actor, aerr := h.authService.GetCurrentUser(c.Context(), actorID, "superadmin", ""); aerr == nil && actor != nil {
+			actorEmail = actor.Email
+		}
+		_ = h.auditLogRepo.Create(c.Context(), &model.AuditLog{
+			UserID:     actorID,
+			UserEmail:  actorEmail,
+			Role:       "superadmin",
+			TenantID:   tenantID,
+			Action:     "impersonate",
+			Resource:   "tenant",
+			ResourceID: tenantID,
+			Method:     c.Method(),
+			Path:       c.Path(),
+			IPAddress:  c.IP(),
+			UserAgent:  c.Get("User-Agent"),
+			StatusCode: fiber.StatusOK,
+		})
+	}
+
+	return c.JSON(resp)
 }
 
 // POST /api/v1/tenants/:id/approve

@@ -30,4 +30,24 @@ else
   echo "[entrypoint] WG_PRIVATE_KEY not set — running in Direct/IP-Publik mode (no WireGuard)"
 fi
 
+# Route to the legacy VPN (L2TP/SSTP) subnet via the accel-ppp container, so
+# RADIUS replies and CoA reach tunneled routers. Refreshed in a loop because the
+# vpn container's IP changes when it is recreated. Needs NET_ADMIN.
+if [ -n "$LEGACY_VPN_HOST" ]; then
+  LEGACY_SUBNET="${LEGACY_VPN_SUBNET:-10.78.0.0/24}"
+  (
+    LAST_GW=""
+    while true; do
+      GW="$(getent hosts "$LEGACY_VPN_HOST" 2>/dev/null | awk '{print $1; exit}')"
+      if [ -n "$GW" ] && [ "$GW" != "$LAST_GW" ]; then
+        if ip route replace "$LEGACY_SUBNET" via "$GW" 2>/dev/null; then
+          echo "[entrypoint] legacy VPN route $LEGACY_SUBNET via $GW"
+          LAST_GW="$GW"
+        fi
+      fi
+      sleep 30
+    done
+  ) &
+fi
+
 exec "$@"

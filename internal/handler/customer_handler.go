@@ -35,6 +35,9 @@ type createCustomerRequest struct {
 	Latitude         *float64 `json:"latitude"`
 	Longitude        *float64 `json:"longitude"`
 	ConnectionType   string   `json:"connection_type"`
+	// PPPoE credentials opsional; kosong = digenerate otomatis oleh sistem
+	PPPoEUsername    string   `json:"pppoe_username"`
+	PPPoEPassword    string   `json:"pppoe_password"`
 	IPAddress        string   `json:"ip_address"`
 	PackageID        *string  `json:"package_id"`
 	RouterID         *string  `json:"router_id"`
@@ -121,6 +124,8 @@ func (h *CustomerHandler) Create(c *fiber.Ctx) error {
 		Latitude:         req.Latitude,
 		Longitude:        req.Longitude,
 		ConnectionType:   req.ConnectionType,
+		PPPoEUsername:    req.PPPoEUsername,
+		PPPoEPassword:    req.PPPoEPassword,
 		IPAddress:        req.IPAddress,
 		PackageID:        req.PackageID,
 		RouterID:         req.RouterID,
@@ -410,6 +415,9 @@ func (h *CustomerHandler) handleError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, service.ErrCustomerCodeExists),
 		errors.Is(err, service.ErrPPPoEUsernameExists):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, service.ErrPPPoEUsernameInvalid),
+		errors.Is(err, service.ErrPPPoEPasswordInvalid):
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, service.ErrCustomerLimitReached):
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 	default:

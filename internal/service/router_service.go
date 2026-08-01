@@ -3,14 +3,18 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/candrasyahputra/radius-server/internal/config"
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/pkg/vpn"
 	"github.com/candrasyahputra/radius-server/internal/repository"
@@ -37,6 +41,7 @@ type RouterService struct {
 	vpnManager   *vpn.Manager
 	appURL       string
 	radiusSecret string
+	legacyVPN    config.LegacyVPNConfig
 }
 
 func NewRouterService(routerRepo repository.RouterRepository, sessionRepo repository.SessionRepository, vpnMgr *vpn.Manager) *RouterService {
@@ -56,6 +61,11 @@ func (s *RouterService) WithSNMP(snmp *SNMPService) *RouterService {
 
 func (s *RouterService) WithIfaceRepo(repo repository.RouterIfaceRepository) *RouterService {
 	s.ifaceRepo = repo
+	return s
+}
+
+func (s *RouterService) WithLegacyVPN(cfg config.LegacyVPNConfig) *RouterService {
+	s.legacyVPN = cfg
 	return s
 }
 
@@ -535,7 +545,7 @@ func stringVal(s *string) string {
 
 type MikroTikConfig struct {
 	RouterName        string `json:"router_name"`
-	Mode              string `json:"mode"` // "wireguard" | "direct"
+	Mode              string `json:"mode"` // "wireguard" | "legacy" | "direct"
 	VPNIP             string `json:"vpn_ip"`
 	RADIUSSecret      string `json:"radius_secret"`
 	RADIUSAddress     string `json:"radius_address"` // address the router must point RADIUS to (mode-aware)
@@ -552,6 +562,15 @@ type MikroTikConfig struct {
 	RADIUSAuthPort    string `json:"radius_auth_port"`
 	RADIUSAcctPort    string `json:"radius_acct_port"`
 	Script            string `json:"script"`
+
+	// Legacy VPN (L2TP/SSTP via accel-ppp) — for RouterOS 6 / routers behind NAT.
+	LegacyVPNAvailable bool   `json:"legacy_vpn_available"`
+	LegacyVPNUsername  string `json:"legacy_vpn_username,omitempty"`
+	LegacyVPNPassword  string `json:"legacy_vpn_password,omitempty"`
+	LegacyVPNIP        string `json:"legacy_vpn_ip,omitempty"`
+	LegacyVPNGateway   string `json:"legacy_vpn_gw,omitempty"`
+	LegacyL2TPPort     string `json:"legacy_l2tp_port,omitempty"`
+	LegacySSTPPort     string `json:"legacy_sstp_port,omitempty"`
 }
 
 func (s *RouterService) GetMikroTikConfig(ctx context.Context, tenantID, routerID string) (*MikroTikConfig, error) {
@@ -600,13 +619,29 @@ func (s *RouterService) GetMikroTikConfig(ctx context.Context, tenantID, routerI
 		}
 	}
 
-	// Determine connection mode dynamically. A router only carries a VPN IP when
-	// it was provisioned over WireGuard; otherwise it runs Direct / IP Publik and
-	// RADIUS must point at the server's public address (not the unreachable VPN IP).
-	if router.UsesVPN() {
+	// Legacy VPN (L2TP/SSTP) values — surfaced whenever the concentrator is
+	// enabled so the guide can offer the mode; credentials only once provisioned.
+	config.LegacyVPNAvailable = s.legacyVPN.SecretsFile != ""
+	config.LegacyVPNGateway = s.legacyVPN.GatewayIP
+	config.LegacyL2TPPort = s.legacyVPN.L2TPPort
+	config.LegacySSTPPort = s.legacyVPN.SSTPPort
+	if router.UsesLegacyVPN() {
+		config.LegacyVPNUsername = router.ID
+		config.LegacyVPNPassword = router.VPNPassword
+		config.LegacyVPNIP = router.LegacyVPNIP
+	}
+
+	// Determine connection mode dynamically. WireGuard (registered public key)
+	// wins; then provisioned L2TP/SSTP credentials; otherwise Direct / IP Publik
+	// and RADIUS must point at the server's public address.
+	switch {
+	case router.UsesVPN():
 		config.Mode = "wireguard"
 		config.RADIUSAddress = config.ServerVPNIP
-	} else {
+	case router.UsesLegacyVPN():
+		config.Mode = "legacy"
+		config.RADIUSAddress = s.legacyVPN.GatewayIP
+	default:
 		config.Mode = "direct"
 		config.RADIUSAddress = config.ServerEndpoint
 	}
@@ -698,4 +733,109 @@ func (s *RouterService) RegisterVPNKey(ctx context.Context, tenantID, routerID, 
 
 func (s *RouterService) getUsedVPNIPs(ctx context.Context) ([]string, error) {
 	return s.routerRepo.ListAllVPNIPs(ctx)
+}
+
+// EnableLegacyVPN provisions L2TP/SSTP tunnel credentials for a router that
+// cannot use WireGuard (RouterOS 6 / behind NAT): a static tunnel IP from the
+// legacy subnet plus a generated password (tunnel username = router ID).
+// Idempotent — returns the existing credentials when already provisioned.
+func (s *RouterService) EnableLegacyVPN(ctx context.Context, tenantID, routerID string) (*model.Router, error) {
+	if s.legacyVPN.SecretsFile == "" {
+		return nil, errors.New("VPN L2TP/SSTP belum diaktifkan di server")
+	}
+	router, err := s.routerRepo.FindByID(ctx, tenantID, routerID)
+	if err != nil {
+		return nil, err
+	}
+	if router == nil {
+		return nil, ErrRouterNotFound
+	}
+	if router.LegacyVPNIP != "" && router.VPNPassword != "" {
+		return router, nil
+	}
+
+	password, err := generateToken(12)
+	if err != nil {
+		return nil, err
+	}
+	used, err := s.routerRepo.ListAllLegacyVPNIPs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ip, err := allocateLegacyVPNIP(s.legacyVPN.Subnet, s.legacyVPN.GatewayIP, used)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.routerRepo.SetLegacyVPN(ctx, tenantID, routerID, password, ip); err != nil {
+		return nil, err
+	}
+	if err := s.SyncLegacyVPNSecrets(ctx); err != nil {
+		log.Printf("legacy VPN: sync chap-secrets failed: %v", err)
+	}
+	return s.routerRepo.FindByID(ctx, tenantID, routerID)
+}
+
+// allocateLegacyVPNIP picks the lowest free host address in the legacy VPN
+// subnet, skipping the network, broadcast and gateway addresses.
+func allocateLegacyVPNIP(subnet, gateway string, used []string) (string, error) {
+	_, ipNet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return "", fmt.Errorf("subnet VPN legacy tidak valid: %w", err)
+	}
+	taken := make(map[string]bool, len(used)+1)
+	for _, u := range used {
+		taken[u] = true
+	}
+	taken[gateway] = true
+
+	base4 := ipNet.IP.To4()
+	if base4 == nil {
+		return "", errors.New("subnet VPN legacy harus IPv4")
+	}
+	base := binary.BigEndian.Uint32(base4)
+	ones, bits := ipNet.Mask.Size()
+	size := uint32(1) << (bits - ones)
+	// Skip network (+0), gateway convention (+1 covered via taken) and broadcast.
+	for off := uint32(1); off < size-1; off++ {
+		candidate := make(net.IP, 4)
+		binary.BigEndian.PutUint32(candidate, base+off)
+		ip := candidate.String()
+		if !taken[ip] {
+			return ip, nil
+		}
+	}
+	return "", errors.New("tidak ada IP VPN legacy yang tersisa")
+}
+
+// SyncLegacyVPNSecrets rewrites the accel-ppp chap-secrets file from the
+// database. accel-ppp reads it per authentication (plus the vpn container
+// watches its mtime and issues a reload), so a plain atomic write is enough.
+// Format per line: <username> * <password> <static-ip>
+func (s *RouterService) SyncLegacyVPNSecrets(ctx context.Context) error {
+	if s.legacyVPN.SecretsFile == "" {
+		return nil
+	}
+	accounts, err := s.routerRepo.ListLegacyVPNAccounts(ctx)
+	if err != nil {
+		return err
+	}
+	content := buildChapSecrets(accounts)
+	tmp := s.legacyVPN.SecretsFile + ".tmp"
+	if err := os.MkdirAll(filepath.Dir(s.legacyVPN.SecretsFile), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.legacyVPN.SecretsFile)
+}
+
+// buildChapSecrets renders the accel-ppp chap-secrets file body.
+func buildChapSecrets(accounts []repository.LegacyVPNAccount) string {
+	var b strings.Builder
+	b.WriteString("# Generated by radius app — do not edit; entries come from the routers table.\n")
+	for _, a := range accounts {
+		b.WriteString(fmt.Sprintf("%s * %s %s\n", a.RouterID, a.Password, a.IP))
+	}
+	return b.String()
 }

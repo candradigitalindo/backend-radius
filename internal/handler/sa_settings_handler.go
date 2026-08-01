@@ -185,6 +185,10 @@ func (h *SASettingsHandler) TestPGConnection(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "error": msg})
 	}
 
+	if provider == "bank_transfer" {
+		return c.JSON(fiber.Map{"success": true, "message": "Transfer Bank tidak memerlukan pengujian koneksi"})
+	}
+
 	var err error
 	switch provider {
 	case "midtrans":

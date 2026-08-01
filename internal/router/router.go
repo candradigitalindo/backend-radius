@@ -106,7 +106,15 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	snmpService := service.NewSNMPService(oltRepo, vpnMgr)
 	routerService := service.NewRouterService(routerRepo, sessionRepo, vpnMgr).WithSNMP(snmpService).
 		WithAppConfig(deps.Config.App.URL, deps.Config.RADIUS.Secret).
-		WithIfaceRepo(repository.NewRouterIfaceRepository(deps.DB))
+		WithIfaceRepo(repository.NewRouterIfaceRepository(deps.DB)).
+		WithLegacyVPN(deps.Config.LegacyVPN)
+	// Regenerate the accel-ppp chap-secrets file at boot so the legacy VPN
+	// container always reflects the database after a volume/container recreate.
+	go func() {
+		if err := routerService.SyncLegacyVPNSecrets(context.Background()); err != nil {
+			log.Printf("legacy VPN: boot chap-secrets sync failed: %v", err)
+		}
+	}()
 	packageService := service.NewPackageService(packageRepo)
 	invoiceService := service.NewInvoiceService(invoiceRepo, paymentRepo, customerRepo).WithTenantRepo(tenantRepo).WithWAClient(waClient).WithBaseURL(deps.Config.App.URL).WithSettingRepo(settingRepo).WithBillingProfileRepo(billingProfileRepo)
 	ticketService := service.NewTicketService(ticketRepo)
@@ -165,7 +173,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	internalHandler := handler.NewInternalHandler(tenantRepo, customerRepo, deps.Config.WhatsApp.APISecret)
 	packageHandler := handler.NewPackageHandler(packageService)
 	baseURL := deps.Config.App.URL
-	tenantHandler := handler.NewTenantHandler(tenantService).WithWebhookBaseURL(baseURL)
+	tenantHandler := handler.NewTenantHandler(tenantService).WithWebhookBaseURL(baseURL).WithAuthService(authService).WithAuditLogRepo(auditLogRepo)
 	invoiceHandler := handler.NewInvoiceHandler(invoiceService)
 	ticketHandler := handler.NewTicketHandler(ticketService)
 	voucherHandler := handler.NewVoucherHandler(voucherService)
@@ -508,6 +516,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	routers.Post("/:id/test", middleware.PermissionGuard("routers.edit"), routerHandler.TestConnection)
 	routers.Post("/:id/sync", middleware.PermissionGuard("routers.edit"), routerHandler.SyncSessions)
 	routers.Post("/:id/vpn-key", middleware.PermissionGuard("routers.edit"), routerHandler.RegisterVPNKey)
+	routers.Post("/:id/legacy-vpn", middleware.PermissionGuard("routers.edit"), routerHandler.EnableLegacyVPN)
 	routers.Get("/:id/mikrotik-config", routerHandler.GetMikroTikConfig)
 	routers.Get("/:id/connection-logs", routerHandler.ListConnectionLogs)
 	routers.Get("/:id/ip-pool", ipamHandler.GetPoolByRouter)
@@ -737,6 +746,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	tenants.Get("/:id", tenantHandler.GetByID)
 	tenants.Put("/:id", tenantHandler.AdminUpdate)
 	tenants.Post("/:id/approve", tenantHandler.Approve)
+	tenants.Post("/:id/impersonate", tenantHandler.Impersonate)
 	tenants.Post("/:id/reset-password", adminHandler.ResetTenantPassword)
 	tenants.Delete("/:id", tenantHandler.Delete)
 

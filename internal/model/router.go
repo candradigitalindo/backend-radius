@@ -10,6 +10,8 @@ type Router struct {
 	Identity       string     `json:"identity"`
 	VPNIP          string     `json:"vpn_ip"`
 	VPNPublicKey   string     `json:"vpn_public_key"`
+	VPNPassword    string     `json:"vpn_password,omitempty"`
+	LegacyVPNIP    string     `json:"legacy_vpn_ip"`
 	RADIUSSecret   string     `json:"radius_secret"`
 	CoAPort        int        `json:"coa_port"`
 	HeartbeatToken string     `json:"heartbeat_token"`
@@ -29,12 +31,16 @@ type Router struct {
 }
 
 // CoAAddress returns the address the server should use to reach this router for
-// CoA / Disconnect-Request. WireGuard routers are reachable on their VPN IP;
-// Direct (IP Publik) routers on their last-known WAN IP (nas_ip). This makes
-// outbound RADIUS work the same whether or not a VPN tunnel is used.
+// CoA / Disconnect-Request. WireGuard routers are reachable on their VPN IP,
+// legacy-VPN (L2TP/SSTP) routers on their static tunnel IP, and Direct
+// (IP Publik) routers on their last-known WAN IP (nas_ip). This makes outbound
+// RADIUS work the same whichever way the router is connected.
 func (r *Router) CoAAddress() string {
 	if r.UsesVPN() {
 		return r.VPNIP
+	}
+	if r.LegacyVPNIP != "" {
+		return r.LegacyVPNIP
 	}
 	return r.NASIP
 }
@@ -43,6 +49,10 @@ func (r *Router) CoAAddress() string {
 // Every router gets a vpn_ip pre-allocated at creation, so the reliable marker
 // of an actually-established tunnel is a registered WireGuard public key.
 func (r *Router) UsesVPN() bool { return r.VPNPublicKey != "" }
+
+// UsesLegacyVPN reports whether the router has L2TP/SSTP tunnel credentials
+// provisioned (RouterOS 6 behind NAT). WireGuard takes precedence when both exist.
+func (r *Router) UsesLegacyVPN() bool { return r.LegacyVPNIP != "" }
 
 type RouterConnectionLog struct {
 	ID          string    `json:"id"`

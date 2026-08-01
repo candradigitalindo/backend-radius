@@ -22,6 +22,9 @@ type Claims struct {
 	TenantID string `json:"tenant_id"`
 	Role     string `json:"role"`
 	Type     string `json:"type"`
+	// ImpersonatorID, when set, marks this token as a superadmin session
+	// temporarily acting as a tenant user. Empty for normal sessions.
+	ImpersonatorID string `json:"-"`
 }
 
 type TokenPair struct {
@@ -93,6 +96,30 @@ func (m *Manager) GeneratePair(claims Claims) (*TokenPair, error) {
 		RefreshToken: refreshStr,
 		ExpiresIn:    int64(m.accessExpiry.Seconds()),
 	}, nil
+}
+
+// GenerateImpersonationToken issues a single short-lived access token (no
+// refresh token) for a superadmin temporarily viewing the app as a tenant
+// user. The impersonator's user id is embedded so it can be audited.
+func (m *Manager) GenerateImpersonationToken(claims Claims, expiry time.Duration) (string, int64, error) {
+	now := time.Now()
+
+	accessClaims := jwt.MapClaims{
+		"sub":             claims.UserID,
+		"tenant_id":       claims.TenantID,
+		"role":            claims.Role,
+		"type":            "access",
+		"impersonator_id": claims.ImpersonatorID,
+		"iat":             now.Unix(),
+		"exp":             now.Add(expiry).Unix(),
+	}
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)
+	accessStr, err := accessToken.SignedString(m.privateKey)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return accessStr, int64(expiry.Seconds()), nil
 }
 
 func (m *Manager) ValidateRefreshToken(tokenStr string) (*Claims, error) {

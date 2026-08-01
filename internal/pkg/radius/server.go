@@ -506,7 +506,9 @@ func (s *Server) handleAccounting(w radius.ResponseWriter, r *radius.Request) {
 
 	// Always sync nas_ip from accounting packet — WAN IP changes on PPPoE reconnect
 	// so this is more up-to-date than waiting for the next heartbeat interval.
-	if ip := nasIP.String(); ip != "" && ip != router.VPNIP {
+	// Tunnel IPs (WireGuard / legacy L2TP-SSTP) must never overwrite nas_ip:
+	// nas_ip is the router's WAN address, used for CoA in Direct mode only.
+	if ip := nasIP.String(); ip != "" && ip != router.VPNIP && ip != router.LegacyVPNIP {
 		_ = s.routerRepo.UpdateNASIP(ctx, router.ID, ip)
 	}
 

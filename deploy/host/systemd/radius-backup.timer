@@ -1,0 +1,10 @@
+[Unit]
+Description=Jadwal backup nightly stack D Radius
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 Asia/Jakarta
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

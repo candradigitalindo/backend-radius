@@ -31,6 +31,11 @@ type SubscriptionRepository interface {
 	ListOrders(ctx context.Context, tenantID string, filter OrderFilter) ([]model.SubscriptionOrder, int, error)
 	ListAllOrders(ctx context.Context, filter AdminOrderFilter) ([]AdminOrderRow, int, error)
 	DeleteOrder(ctx context.Context, orderID string) error
+
+	// ExistsPendingTransferAmount reports whether another pending bank-transfer
+	// order already claims the given total amount (amount + unique_code), so a
+	// new unique code can be picked without ambiguity for manual verification.
+	ExistsPendingTransferAmount(ctx context.Context, totalAmount int64, excludeOrderID string) (bool, error)
 }
 
 type OrderFilter struct {
@@ -213,14 +218,14 @@ func (r *subscriptionRepository) CreateOrder(ctx context.Context, order *model.S
 	query := `
 		INSERT INTO subscription_orders (
 			id, tenant_id, plan_id, plan_name, amount, duration_months,
-			status, payment_method, payment_url, payment_ref, snap_token,
+			status, payment_method, payment_url, payment_ref, snap_token, unique_code,
 			paid_at, starts_at, expires_at, notes, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 	`
 	_, err := r.db.Exec(ctx, query,
 		order.ID, order.TenantID, order.PlanID, order.PlanName,
 		order.Amount, order.DurationMonths,
-		order.Status, order.PaymentMethod, order.PaymentURL, order.PaymentRef, order.SnapToken,
+		order.Status, order.PaymentMethod, order.PaymentURL, order.PaymentRef, order.SnapToken, order.UniqueCode,
 		order.PaidAt, order.StartsAt, order.ExpiresAt, order.Notes,
 		order.CreatedAt, order.UpdatedAt,
 	)
@@ -231,7 +236,7 @@ func (r *subscriptionRepository) FindOrderByID(ctx context.Context, orderID stri
 	query := `
 		SELECT id, tenant_id, plan_id, plan_name, amount, duration_months,
 		       status, COALESCE(payment_method,''), COALESCE(payment_url,''), COALESCE(payment_ref,''),
-		       COALESCE(snap_token,''), paid_at, starts_at, expires_at, COALESCE(notes,''), created_at, updated_at
+		       COALESCE(snap_token,''), unique_code, paid_at, starts_at, expires_at, COALESCE(notes,''), created_at, updated_at
 		FROM subscription_orders
 		WHERE id = $1
 	`
@@ -239,7 +244,7 @@ func (r *subscriptionRepository) FindOrderByID(ctx context.Context, orderID stri
 	err := r.db.QueryRow(ctx, query, orderID).Scan(
 		&o.ID, &o.TenantID, &o.PlanID, &o.PlanName, &o.Amount, &o.DurationMonths,
 		&o.Status, &o.PaymentMethod, &o.PaymentURL, &o.PaymentRef,
-		&o.SnapToken, &o.PaidAt, &o.StartsAt, &o.ExpiresAt, &o.Notes, &o.CreatedAt, &o.UpdatedAt,
+		&o.SnapToken, &o.UniqueCode, &o.PaidAt, &o.StartsAt, &o.ExpiresAt, &o.Notes, &o.CreatedAt, &o.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -254,7 +259,7 @@ func (r *subscriptionRepository) FindOrderByPaymentRef(ctx context.Context, paym
 	query := `
 		SELECT id, tenant_id, plan_id, plan_name, amount, duration_months,
 		       status, COALESCE(payment_method,''), COALESCE(payment_url,''), COALESCE(payment_ref,''),
-		       COALESCE(snap_token,''), paid_at, starts_at, expires_at, COALESCE(notes,''), created_at, updated_at
+		       COALESCE(snap_token,''), unique_code, paid_at, starts_at, expires_at, COALESCE(notes,''), created_at, updated_at
 		FROM subscription_orders
 		WHERE payment_ref = $1
 	`
@@ -262,7 +267,7 @@ func (r *subscriptionRepository) FindOrderByPaymentRef(ctx context.Context, paym
 	err := r.db.QueryRow(ctx, query, paymentRef).Scan(
 		&o.ID, &o.TenantID, &o.PlanID, &o.PlanName, &o.Amount, &o.DurationMonths,
 		&o.Status, &o.PaymentMethod, &o.PaymentURL, &o.PaymentRef,
-		&o.SnapToken, &o.PaidAt, &o.StartsAt, &o.ExpiresAt, &o.Notes, &o.CreatedAt, &o.UpdatedAt,
+		&o.SnapToken, &o.UniqueCode, &o.PaidAt, &o.StartsAt, &o.ExpiresAt, &o.Notes, &o.CreatedAt, &o.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -277,16 +282,30 @@ func (r *subscriptionRepository) UpdateOrder(ctx context.Context, order *model.S
 	order.UpdatedAt = time.Now()
 	query := `
 		UPDATE subscription_orders SET
-			status = $1, payment_method = $2, payment_url = $3, payment_ref = $4, snap_token = $5,
-			paid_at = $6, starts_at = $7, expires_at = $8, notes = $9, updated_at = $10
-		WHERE id = $11
+			status = $1, payment_method = $2, payment_url = $3, payment_ref = $4, snap_token = $5, unique_code = $6,
+			paid_at = $7, starts_at = $8, expires_at = $9, notes = $10, updated_at = $11
+		WHERE id = $12
 	`
 	_, err := r.db.Exec(ctx, query,
-		order.Status, order.PaymentMethod, order.PaymentURL, order.PaymentRef, order.SnapToken,
+		order.Status, order.PaymentMethod, order.PaymentURL, order.PaymentRef, order.SnapToken, order.UniqueCode,
 		order.PaidAt, order.StartsAt, order.ExpiresAt, order.Notes, order.UpdatedAt,
 		order.ID,
 	)
 	return err
+}
+
+// ExistsPendingTransferAmount reports whether a pending bank-transfer order
+// (other than excludeOrderID) already expects the given total amount.
+func (r *subscriptionRepository) ExistsPendingTransferAmount(ctx context.Context, totalAmount int64, excludeOrderID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM subscription_orders
+			WHERE status = 'pending' AND payment_method = 'bank_transfer'
+			  AND (amount + unique_code) = $1 AND id != $2
+		)
+	`, totalAmount, excludeOrderID).Scan(&exists)
+	return exists, err
 }
 
 func (r *subscriptionRepository) DeleteOrder(ctx context.Context, orderID string) error {
@@ -337,7 +356,7 @@ func (r *subscriptionRepository) ListAllOrders(ctx context.Context, filter Admin
 	query := fmt.Sprintf(`
 		SELECT o.id, o.tenant_id, o.plan_id, o.plan_name, o.amount, o.duration_months,
 		       o.status, COALESCE(o.payment_method,''), COALESCE(o.payment_url,''), COALESCE(o.payment_ref,''),
-		       COALESCE(o.snap_token,''), o.paid_at, o.starts_at, o.expires_at, COALESCE(o.notes,''),
+		       COALESCE(o.snap_token,''), o.unique_code, o.paid_at, o.starts_at, o.expires_at, COALESCE(o.notes,''),
 		       o.created_at, o.updated_at, t.name
 		FROM subscription_orders o
 		JOIN tenants t ON t.id = o.tenant_id
@@ -359,7 +378,7 @@ func (r *subscriptionRepository) ListAllOrders(ctx context.Context, filter Admin
 		if err := rows.Scan(
 			&row.ID, &row.TenantID, &row.PlanID, &row.PlanName, &row.Amount, &row.DurationMonths,
 			&row.Status, &row.PaymentMethod, &row.PaymentURL, &row.PaymentRef,
-			&row.SnapToken, &row.PaidAt, &row.StartsAt, &row.ExpiresAt, &row.Notes,
+			&row.SnapToken, &row.UniqueCode, &row.PaidAt, &row.StartsAt, &row.ExpiresAt, &row.Notes,
 			&row.CreatedAt, &row.UpdatedAt, &row.TenantName,
 		); err != nil {
 			return nil, 0, err
@@ -402,7 +421,7 @@ func (r *subscriptionRepository) ListOrders(ctx context.Context, tenantID string
 	query := fmt.Sprintf(`
 		SELECT id, tenant_id, plan_id, plan_name, amount, duration_months,
 		       status, COALESCE(payment_method,''), COALESCE(payment_url,''), COALESCE(payment_ref,''),
-		       COALESCE(snap_token,''), paid_at, starts_at, expires_at, COALESCE(notes,''), created_at, updated_at
+		       COALESCE(snap_token,''), unique_code, paid_at, starts_at, expires_at, COALESCE(notes,''), created_at, updated_at
 		FROM subscription_orders
 		%s
 		ORDER BY created_at DESC
@@ -423,7 +442,7 @@ func (r *subscriptionRepository) ListOrders(ctx context.Context, tenantID string
 		if err := rows.Scan(
 			&o.ID, &o.TenantID, &o.PlanID, &o.PlanName, &o.Amount, &o.DurationMonths,
 			&o.Status, &o.PaymentMethod, &o.PaymentURL, &o.PaymentRef,
-			&o.SnapToken, &o.PaidAt, &o.StartsAt, &o.ExpiresAt, &o.Notes, &o.CreatedAt, &o.UpdatedAt,
+			&o.SnapToken, &o.UniqueCode, &o.PaidAt, &o.StartsAt, &o.ExpiresAt, &o.Notes, &o.CreatedAt, &o.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}

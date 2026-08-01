@@ -15,7 +15,8 @@ type Config struct {
 	Redis    RedisConfig
 	JWT      JWTConfig
 	RADIUS   RADIUSConfig
-	VPN      VPNConfig
+	VPN       VPNConfig
+	LegacyVPN LegacyVPNConfig
 	CORS     CORSConfig
 	Log      LogConfig
 	Storage  StorageConfig
@@ -80,6 +81,17 @@ type VPNConfig struct {
 	PublicIP   string
 }
 
+// LegacyVPNConfig is the L2TP/SSTP concentrator (accel-ppp container) for
+// routers that cannot run WireGuard (RouterOS 6) and sit behind NAT. Routers
+// get a static tunnel IP from Subnet via a chap-secrets file this app writes.
+type LegacyVPNConfig struct {
+	Subnet      string // e.g. 10.78.0.0/24 — must differ from the WireGuard subnet
+	GatewayIP   string // accel-ppp gw-ip-address; RADIUS address tenants point to
+	SecretsFile string // chap-secrets path on the shared volume; empty = disabled
+	L2TPPort    string
+	SSTPPort    string
+}
+
 type CORSConfig struct {
 	AllowedOrigins string
 }
@@ -113,6 +125,11 @@ type PGConfig struct {
 	SecretKey  string
 	MerchantID string
 	Sandbox    bool
+
+	// Manual bank transfer (used when Provider == "bank_transfer")
+	BankName          string
+	BankAccountNumber string
+	BankAccountHolder string
 }
 
 func Load() (*Config, error) {
@@ -163,6 +180,13 @@ func Load() (*Config, error) {
 			ListenPort: getEnv("VPN_LISTEN_PORT", "51820"),
 			PublicIP:   getEnv("VPN_PUBLIC_IP", ""),
 		},
+		LegacyVPN: LegacyVPNConfig{
+			Subnet:      getEnv("LEGACY_VPN_SUBNET", "10.78.0.0/24"),
+			GatewayIP:   getEnv("LEGACY_VPN_GW", "10.78.0.1"),
+			SecretsFile: getEnv("LEGACY_VPN_SECRETS_FILE", ""),
+			L2TPPort:    getEnv("LEGACY_VPN_L2TP_PORT", "1701"),
+			SSTPPort:    getEnv("LEGACY_VPN_SSTP_PORT", "5443"),
+		},
 		CORS: CORSConfig{
 			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174"),
 		},
@@ -190,11 +214,15 @@ func Load() (*Config, error) {
 			Enabled:         getEnvBool("FCM_ENABLED", false),
 		},
 		PG: PGConfig{
-			Provider:   getEnv("PG_PROVIDER", "tripay"),
+			Provider:   getEnv("PG_PROVIDER", "bank_transfer"),
 			APIKey:     getEnv("PG_API_KEY", ""),
 			SecretKey:  getEnv("PG_SECRET_KEY", ""),
 			MerchantID: getEnv("PG_MERCHANT_ID", ""),
 			Sandbox:    getEnvBool("PG_SANDBOX", true),
+
+			BankName:          getEnv("BANK_TRANSFER_BANK_NAME", "BCA"),
+			BankAccountNumber: getEnv("BANK_TRANSFER_ACCOUNT_NUMBER", "1750566584"),
+			BankAccountHolder: getEnv("BANK_TRANSFER_ACCOUNT_HOLDER", "Candra Syahputra"),
 		},
 	}
 

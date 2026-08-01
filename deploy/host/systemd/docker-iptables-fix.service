@@ -1,0 +1,13 @@
+[Unit]
+Description=Post-start fixes for snap Docker (AppArmor docker-default + iptables safety-net)
+# Bergantung ke snap docker, BUKAN docker.service (system docker yang di-mask).
+After=snap.docker.dockerd.service
+Wants=snap.docker.dockerd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docker-iptables-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

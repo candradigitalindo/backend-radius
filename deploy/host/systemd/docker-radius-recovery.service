@@ -1,0 +1,16 @@
+[Unit]
+Description=Docker Radius Recovery — pastikan container radius berjalan bersih setelah reboot
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docker-radius-recovery.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

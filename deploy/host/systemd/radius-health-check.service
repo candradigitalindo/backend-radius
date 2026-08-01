@@ -1,0 +1,8 @@
+[Unit]
+Description=Radius stack health check + alert WhatsApp
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/radius-health-check.sh

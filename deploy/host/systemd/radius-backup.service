@@ -1,0 +1,13 @@
+[Unit]
+Description=Backup nightly stack D Radius (database + volume + konfigurasi)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=BASE_DIR=/home/daniswara/radius-server
+Environment=BACKUP_DIR=/var/backups/radius
+Environment=RETENTION=7
+ExecStart=/usr/local/bin/radius-backup.sh
+Nice=10
+IOSchedulingClass=idle

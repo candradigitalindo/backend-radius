@@ -1,0 +1,8 @@
+[Unit]
+Description=Monitor error-rate balasan CS bot D Radius
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec -e DRY_RUN=0 radius_n8n node --experimental-sqlite /home/node/.n8n/cs-bot-health.js

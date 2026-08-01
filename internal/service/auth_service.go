@@ -446,6 +446,71 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*AuthRespons
 	}, nil
 }
 
+// impersonationTokenExpiry bounds how long a superadmin can browse as a
+// tenant before the session dies and they must re-enter from the superadmin
+// panel. No refresh token is issued for impersonation sessions.
+const impersonationTokenExpiry = 30 * time.Minute
+
+// ImpersonateTenant mints a short-lived access token for a superadmin
+// (actorID) to browse the app exactly as the given tenant's staff would see
+// it. It logs in as the tenant's owner (or the first active staff user if no
+// owner is active). actorID is embedded in the token for auditing.
+func (s *AuthService) ImpersonateTenant(ctx context.Context, tenantID, actorID string) (*AuthResponse, error) {
+	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if tenant == nil {
+		return nil, ErrTenantNotFound
+	}
+
+	users, err := s.userRepo.ListByTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	var target *model.User
+	for _, u := range users {
+		if u.Role == "owner" && u.IsActive {
+			target = u
+			break
+		}
+	}
+	if target == nil {
+		for _, u := range users {
+			if u.IsActive {
+				target = u
+				break
+			}
+		}
+	}
+	if target == nil {
+		return nil, errors.New("tenant ini belum memiliki pengguna aktif untuk diakses")
+	}
+
+	accessToken, expiresIn, err := s.tokenManager.GenerateImpersonationToken(token.Claims{
+		UserID:         target.ID,
+		TenantID:       target.TenantID,
+		Role:           target.Role,
+		ImpersonatorID: actorID,
+	}, impersonationTokenExpiry)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := s.toUserResponseWithPerms(ctx, target)
+	resp.Plan = tenant.Plan
+	resp.PlanExpiresAt = tenant.PlanExpiresAt
+
+	return &AuthResponse{
+		User: resp,
+		TokenPair: &token.TokenPair{
+			AccessToken: accessToken,
+			ExpiresIn:   expiresIn,
+		},
+	}, nil
+}
+
 func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*token.TokenPair, error) {
 	claims, err := s.tokenManager.ValidateRefreshToken(refreshToken)
 	if err != nil {

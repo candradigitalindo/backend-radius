@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"strings"
@@ -23,6 +24,10 @@ var (
 	ErrPlanInactive  = errors.New("Paket tidak aktif")
 	ErrPendingOrder  = errors.New("Masih ada order yang belum dibayar")
 )
+
+// bankTransferProvider is the pg_provider value that routes subscription
+// checkout to manual bank transfer instead of a payment gateway.
+const bankTransferProvider = "bank_transfer"
 
 type SubscriptionService struct {
 	subRepo      repository.SubscriptionRepository
@@ -82,13 +87,22 @@ func (s *SubscriptionService) loadSAPGConfig(ctx context.Context) *config.PGConf
 	if provider == "" && s.pgCfg != nil {
 		return s.pgCfg
 	}
-	return &config.PGConfig{
+
+	// Bank transfer details are static/ops-configured (env), not superadmin-editable
+	// DB settings — always carry them over from the .env-sourced fallback.
+	cfg := &config.PGConfig{
 		Provider:   provider,
 		APIKey:     apiKey,
 		SecretKey:  secretKey,
 		MerchantID: merchantID,
 		Sandbox:    sandbox,
 	}
+	if s.pgCfg != nil {
+		cfg.BankName = s.pgCfg.BankName
+		cfg.BankAccountNumber = s.pgCfg.BankAccountNumber
+		cfg.BankAccountHolder = s.pgCfg.BankAccountHolder
+	}
+	return cfg
 }
 
 func (s *SubscriptionService) ListPlans(ctx context.Context) ([]model.SubscriptionPlan, error) {
@@ -438,15 +452,17 @@ type SubPaymentResult struct {
 	PaymentURL string     `json:"payment_url"`
 	SnapToken  string     `json:"snap_token,omitempty"`
 	ExpiredAt  *time.Time `json:"expired_at,omitempty"`
+
+	// Manual bank transfer (set when the active provider is bank_transfer)
+	BankName          string `json:"bank_name,omitempty"`
+	BankAccountNumber string `json:"bank_account_number,omitempty"`
+	BankAccountHolder string `json:"bank_account_holder,omitempty"`
+	UniqueCode        int    `json:"unique_code,omitempty"`
+	TotalAmount       int64  `json:"total_amount,omitempty"`
 }
 
 // CreatePayment generates a payment gateway transaction for a pending subscription order.
 func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenantID, returnURL string) (*SubPaymentResult, error) {
-	pgCfg := s.loadSAPGConfig(ctx)
-	if pgCfg == nil || (pgCfg.APIKey == "" && pgCfg.SecretKey == "") {
-		return nil, errors.New("Payment gateway belum dikonfigurasi")
-	}
-
 	order, err := s.subRepo.FindOrderByID(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -461,6 +477,14 @@ func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenant
 		return nil, errors.New("Order sudah diproses")
 	}
 
+	pgCfg := s.loadSAPGConfig(ctx)
+
+	// Idempotent: a bank-transfer order already has its unique code assigned —
+	// return the same instructions rather than generating a new amount.
+	if order.PaymentMethod == bankTransferProvider {
+		return s.bankTransferResult(order, pgCfg), nil
+	}
+
 	// Already has a payment URL → return it
 	if order.PaymentURL != "" {
 		return &SubPaymentResult{
@@ -468,6 +492,14 @@ func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenant
 			PaymentURL: order.PaymentURL,
 			SnapToken:  order.SnapToken,
 		}, nil
+	}
+
+	if pgCfg != nil && pgCfg.Provider == bankTransferProvider {
+		return s.createSubBankTransferPayment(ctx, order, pgCfg)
+	}
+
+	if pgCfg == nil || (pgCfg.APIKey == "" && pgCfg.SecretKey == "") {
+		return nil, errors.New("Payment gateway belum dikonfigurasi")
 	}
 
 	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
@@ -486,6 +518,57 @@ func (s *SubscriptionService) CreatePayment(ctx context.Context, orderID, tenant
 		callbackURL := s.baseURL + "/api/v1/webhooks/subscription/tripay"
 		return s.createSubTripayPayment(ctx, order, tenant, pgCfg, merchantRef, returnURL, callbackURL)
 	}
+}
+
+// createSubBankTransferPayment assigns a unique 3-digit code to the order's
+// amount (so admins can match a specific bank mutation to a specific order)
+// and stores it as the order's payment method.
+func (s *SubscriptionService) createSubBankTransferPayment(ctx context.Context, order *model.SubscriptionOrder, pgCfg *config.PGConfig) (*SubPaymentResult, error) {
+	code, err := s.generateUniqueTransferCode(ctx, order.ID, order.Amount)
+	if err != nil {
+		return nil, err
+	}
+
+	order.PaymentMethod = bankTransferProvider
+	order.UniqueCode = code
+	if err := s.subRepo.UpdateOrder(ctx, order); err != nil {
+		return nil, err
+	}
+
+	return s.bankTransferResult(order, pgCfg), nil
+}
+
+// bankTransferResult builds the payment instructions for an order already
+// assigned to bank transfer, sourcing bank details from the active config.
+func (s *SubscriptionService) bankTransferResult(order *model.SubscriptionOrder, pgCfg *config.PGConfig) *SubPaymentResult {
+	result := &SubPaymentResult{
+		OrderID:     order.ID,
+		UniqueCode:  order.UniqueCode,
+		TotalAmount: order.Amount + int64(order.UniqueCode),
+	}
+	if pgCfg != nil {
+		result.BankName = pgCfg.BankName
+		result.BankAccountNumber = pgCfg.BankAccountNumber
+		result.BankAccountHolder = pgCfg.BankAccountHolder
+	}
+	return result
+}
+
+// generateUniqueTransferCode picks a random 0-999 suffix such that no other
+// pending bank-transfer order currently expects the same total amount.
+func (s *SubscriptionService) generateUniqueTransferCode(ctx context.Context, orderID string, baseAmount int64) (int, error) {
+	const maxAttempts = 30
+	for i := 0; i < maxAttempts; i++ {
+		code := rand.Intn(1000)
+		taken, err := s.subRepo.ExistsPendingTransferAmount(ctx, baseAmount+int64(code), orderID)
+		if err != nil {
+			return 0, err
+		}
+		if !taken {
+			return code, nil
+		}
+	}
+	return 0, errors.New("Gagal membuat kode unik pembayaran, silakan coba lagi")
 }
 
 func (s *SubscriptionService) createSubTripayPayment(ctx context.Context, order *model.SubscriptionOrder, tenant *model.Tenant, pgCfg *config.PGConfig, merchantRef, returnURL, callbackURL string) (*SubPaymentResult, error) {

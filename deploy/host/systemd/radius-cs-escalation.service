@@ -1,0 +1,9 @@
+[Unit]
+Description=Eskalasi CS bot D Radius — notif tim bila tenant butuh manusia
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# DRY_RUN=0 = live (kirim notif). ADMIN_PHONE bisa di-override di sini.
+ExecStart=/usr/bin/docker exec -e DRY_RUN=0 -e ADMIN_PHONE=6281260268381 radius_n8n node --experimental-sqlite /home/node/.n8n/cs-escalation.js

@@ -17,7 +17,7 @@ FROM alpine:3.21
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata iproute2 wireguard-tools
+RUN apk add --no-cache ca-certificates tzdata iproute2 wireguard-tools musl-utils
 ENV TZ=Asia/Jakarta
 
 COPY --from=builder /build/app .
