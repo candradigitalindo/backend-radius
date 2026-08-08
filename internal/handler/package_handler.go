@@ -24,7 +24,6 @@ type createPackageRequest struct {
 	BandwidthUp   int    `json:"bandwidth_up"`
 	BandwidthDown int    `json:"bandwidth_down"`
 	Price         int64  `json:"price"`
-	BurstLimit    string `json:"burst_limit"`
 	AddressList   string `json:"address_list"`
 }
 
@@ -34,7 +33,6 @@ type updatePackageRequest struct {
 	BandwidthUp   int    `json:"bandwidth_up"`
 	BandwidthDown int    `json:"bandwidth_down"`
 	Price         int64  `json:"price"`
-	BurstLimit    string `json:"burst_limit"`
 	AddressList   string `json:"address_list"`
 	IsActive      bool   `json:"is_active"`
 }
@@ -58,7 +56,6 @@ func (h *PackageHandler) Create(c *fiber.Ctx) error {
 		BandwidthUp:   req.BandwidthUp,
 		BandwidthDown: req.BandwidthDown,
 		Price:         req.Price,
-		BurstLimit:    req.BurstLimit,
 		AddressList:   req.AddressList,
 	})
 	if err != nil {
@@ -102,7 +99,6 @@ func (h *PackageHandler) Update(c *fiber.Ctx) error {
 		BandwidthUp:   req.BandwidthUp,
 		BandwidthDown: req.BandwidthDown,
 		Price:         req.Price,
-		BurstLimit:    req.BurstLimit,
 		AddressList:   req.AddressList,
 		IsActive:      req.IsActive,
 	})

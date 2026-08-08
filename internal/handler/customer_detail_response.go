@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
@@ -357,7 +358,7 @@ func mapCustomerPackage(pkg *model.Package) *customerPackageResponse {
 		BandwidthUp:   pkg.BandwidthUp,
 		BandwidthDown: pkg.BandwidthDown,
 		Price:         pkg.Price,
-		BurstLimit:    pkg.BurstLimit,
+		BurstLimit:    fmt.Sprintf("%dM/%dM", model.AutoBurstMbps(pkg.BandwidthUp), model.AutoBurstMbps(pkg.BandwidthDown)),
 		AddressList:   pkg.AddressList,
 	}
 }

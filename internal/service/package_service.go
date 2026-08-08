@@ -27,7 +27,6 @@ type CreatePackageInput struct {
 	BandwidthUp   int
 	BandwidthDown int
 	Price         int64
-	BurstLimit    string
 	AddressList   string
 }
 
@@ -37,7 +36,6 @@ type UpdatePackageInput struct {
 	BandwidthUp   int
 	BandwidthDown int
 	Price         int64
-	BurstLimit    string
 	AddressList   string
 	IsActive      bool
 }
@@ -50,7 +48,6 @@ func (s *PackageService) Create(ctx context.Context, input CreatePackageInput) (
 		BandwidthUp:   input.BandwidthUp,
 		BandwidthDown: input.BandwidthDown,
 		Price:         input.Price,
-		BurstLimit:    input.BurstLimit,
 		AddressList:   input.AddressList,
 		IsActive:      true,
 	}
@@ -87,7 +84,6 @@ func (s *PackageService) Update(ctx context.Context, tenantID, packageID string,
 	pkg.BandwidthUp = input.BandwidthUp
 	pkg.BandwidthDown = input.BandwidthDown
 	pkg.Price = input.Price
-	pkg.BurstLimit = input.BurstLimit
 	pkg.AddressList = input.AddressList
 	pkg.IsActive = input.IsActive
 

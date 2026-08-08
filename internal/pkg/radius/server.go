@@ -258,7 +258,7 @@ func (s *Server) handleAuth(w radius.ResponseWriter, r *radius.Request) {
 //	                           (Cisco/Ruijie also receive ip:sub-qos-policy AVPairs)
 //
 // Returns a short human-readable description for logging.
-func (s *Server) applyRateLimit(resp *radius.Packet, routerType string, upMbps, downMbps int, burst, addressList, packageName string) string {
+func (s *Server) applyRateLimit(resp *radius.Packet, routerType string, upMbps, downMbps int, addressList, packageName string) string {
 	switch routerType {
 	case "huawei":
 		resp.Add(26, radius.Attribute(EncodeVSAInt(HuaweiVendorID, HuaweiAttrInputAverageRate, uint32(upMbps)*1_000_000)))
@@ -278,9 +278,11 @@ func (s *Server) applyRateLimit(resp *radius.Packet, routerType string, upMbps, 
 
 	default: // mikrotik, vyos, or unknown → MikroTik-style inline rate
 		rate := fmt.Sprintf("%dM/%dM", upMbps, downMbps)
-		if burst != "" {
-			rate = fmt.Sprintf("%dM/%dM %sM/%sM %dM/%dM 30/30",
-				upMbps, downMbps, burst, burst, upMbps, downMbps)
+		if upMbps > 0 && downMbps > 0 {
+			rate = fmt.Sprintf("%dM/%dM %dM/%dM %dM/%dM 30/30",
+				upMbps, downMbps,
+				model.AutoBurstMbps(upMbps), model.AutoBurstMbps(downMbps),
+				model.BurstThresholdMbps(upMbps), model.BurstThresholdMbps(downMbps))
 		}
 		resp.Add(26, radius.Attribute(EncodeVSA(MikroTikVendorID, MikroTikAttrRateLimit, rate)))
 		if addressList != "" {
@@ -384,7 +386,7 @@ func (s *Server) handleCustomerAuth(w radius.ResponseWriter, r *radius.Request, 
 	// Apply per-vendor bandwidth/speed limit (vendor-specific attributes).
 	rateLimit := s.applyRateLimit(resp, routerType,
 		customer.Package.BandwidthUp, customer.Package.BandwidthDown,
-		customer.Package.BurstLimit, customer.Package.AddressList, customer.Package.Name)
+		customer.Package.AddressList, customer.Package.Name)
 
 	// Add MS-CHAP2-Success attribute for MS-CHAPv2 auth
 	if method == authMSCHAP2 && mschap2 != nil {
@@ -461,7 +463,7 @@ func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, v
 
 	// Apply per-vendor bandwidth/speed limit.
 	rateLimit := s.applyRateLimit(resp, routerType,
-		voucher.Product.BandwidthUp, voucher.Product.BandwidthDown, "", "", voucher.Product.Name)
+		voucher.Product.BandwidthUp, voucher.Product.BandwidthDown, "", voucher.Product.Name)
 
 	// Set session timeout: remaining time until expiry
 	if voucher.ExpiresAt != nil {
