@@ -45,6 +45,7 @@ type Customer struct {
 	Package *Package `json:"package,omitempty"`
 	Router  *Router  `json:"router,omitempty"`
 	ONT     *ONT     `json:"ont,omitempty"`
+	ODPPort *ODPPort `json:"odp_port,omitempty"`
 
 	// Computed fields - not stored in DB
 	ACSURL         *string        `json:"acs_url,omitempty"`

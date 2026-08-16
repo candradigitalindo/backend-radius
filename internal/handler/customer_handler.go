@@ -416,8 +416,11 @@ func (h *CustomerHandler) handleError(c *fiber.Ctx, err error) error {
 		errors.Is(err, service.ErrPPPoEUsernameExists):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, service.ErrPPPoEUsernameInvalid),
-		errors.Is(err, service.ErrPPPoEPasswordInvalid):
+		errors.Is(err, service.ErrPPPoEPasswordInvalid),
+		errors.Is(err, service.ErrODPPortInvalid):
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, service.ErrODPPortTaken):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, service.ErrCustomerLimitReached):
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 	default:

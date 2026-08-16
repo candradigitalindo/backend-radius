@@ -169,9 +169,12 @@ func (r *ftthRepository) GetMapItems(ctx context.Context, tenantID string) ([]FT
 	}
 	rows.Close()
 
-	// Splitters
+	// Splitters — parent di peta harus id node lain: OLT (via pon_port) atau splitter induk
 	rows, err = r.db.Query(ctx,
-		`SELECT id, name, latitude, longitude, COALESCE(pon_port_id, parent_splitter_id) FROM splitters WHERE tenant_id = $1`, tenantID,
+		`SELECT s.id, s.name, s.latitude, s.longitude, COALESCE(pp.olt_id::text, s.parent_splitter_id::text)
+		 FROM splitters s
+		 LEFT JOIN pon_ports pp ON pp.id = s.pon_port_id
+		 WHERE s.tenant_id = $1`, tenantID,
 	)
 	if err != nil {
 		return nil, err

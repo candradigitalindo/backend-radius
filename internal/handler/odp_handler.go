@@ -22,6 +22,7 @@ func NewODPHandler(odpService *service.ODPService) *ODPHandler {
 
 type createODPRequest struct {
 	OLTID         *string `json:"olt_id"`
+	SplitterID    *string `json:"splitter_id"`
 	PONPortID     *string `json:"pon_port_id"`
 	SplitterRatio *string `json:"splitter_ratio"`
 	Name          string  `json:"name"`
@@ -39,6 +40,7 @@ type createODPRequest struct {
 
 type updateODPRequest struct {
 	OLTID         *string `json:"olt_id"`
+	SplitterID    *string `json:"splitter_id"`
 	PONPortID     *string `json:"pon_port_id"`
 	SplitterRatio *string `json:"splitter_ratio"`
 	Name          string  `json:"name"`
@@ -69,6 +71,7 @@ func (h *ODPHandler) Create(c *fiber.Ctx) error {
 	odp, err := h.odpService.Create(c.Context(), service.CreateODPInput{
 		TenantID:      tenantID,
 		OLTID:         req.OLTID,
+		SplitterID:    req.SplitterID,
 		PONPortID:     req.PONPortID,
 		SplitterRatio: req.SplitterRatio,
 		Name:          req.Name,
@@ -120,6 +123,7 @@ func (h *ODPHandler) Update(c *fiber.Ctx) error {
 
 	odp, err := h.odpService.Update(c.Context(), tenantID, odpID, service.UpdateODPInput{
 		OLTID:         req.OLTID,
+		SplitterID:    req.SplitterID,
 		PONPortID:     req.PONPortID,
 		SplitterRatio: req.SplitterRatio,
 		Name:          req.Name,

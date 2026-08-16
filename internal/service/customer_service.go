@@ -28,6 +28,8 @@ var (
 	ErrCustomerAlreadyActive = errors.New("Pelanggan sudah aktif")
 	ErrCustomerNotActive     = errors.New("Pelanggan tidak aktif")
 	ErrCustomerLimitReached  = errors.New("Batas jumlah pelanggan telah tercapai, upgrade paket untuk menambah lebih banyak pelanggan")
+	ErrODPPortInvalid        = errors.New("Port ODP tidak ditemukan atau bukan milik tenant ini")
+	ErrODPPortTaken          = errors.New("Port ODP sudah dipakai pelanggan lain")
 )
 
 type customerInvoiceRepository interface {
@@ -44,6 +46,7 @@ type CustomerService struct {
 	genieacsSvc   *GenieACSService
 	tenantRepo    repository.TenantRepository
 	rewardSvc     *RewardService
+	odpRepo       repository.ODPRepository
 	appURL        string
 	cwmpURL       string // explicit ACS URL (e.g. https://app.dradius.net/cwmp); takes precedence over IP:port
 	cwmpPort      string
@@ -89,6 +92,71 @@ func (s *CustomerService) WithReward(rewardSvc *RewardService) *CustomerService 
 func (s *CustomerService) WithCWMPPort(port string) *CustomerService {
 	s.cwmpPort = port
 	return s
+}
+
+func (s *CustomerService) WithODPRepo(odpRepo repository.ODPRepository) *CustomerService {
+	s.odpRepo = odpRepo
+	return s
+}
+
+// validateODPPort memastikan port ada, milik tenant, dan tidak dipakai pelanggan
+// lain (excludeCustomerID = pelanggan yang sedang diedit, boleh kosong).
+func (s *CustomerService) validateODPPort(ctx context.Context, tenantID, portID, excludeCustomerID string) error {
+	if s.odpRepo == nil {
+		return nil
+	}
+	port, err := s.odpRepo.FindPortByID(ctx, portID)
+	if err != nil {
+		return err
+	}
+	if port == nil {
+		return ErrODPPortInvalid
+	}
+	odp, err := s.odpRepo.FindByID(ctx, tenantID, port.ODPID)
+	if err != nil {
+		return err
+	}
+	if odp == nil {
+		return ErrODPPortInvalid
+	}
+	if port.CustomerID != nil && *port.CustomerID != "" && *port.CustomerID != excludeCustomerID {
+		return ErrODPPortTaken
+	}
+	return nil
+}
+
+// occupyODPPort menandai port dipakai pelanggan (sinkron sisi odp_ports).
+func (s *CustomerService) occupyODPPort(ctx context.Context, portID, customerID string) {
+	if s.odpRepo == nil {
+		return
+	}
+	port, err := s.odpRepo.FindPortByID(ctx, portID)
+	if err != nil || port == nil {
+		return
+	}
+	port.CustomerID = &customerID
+	port.Status = "used"
+	if err := s.odpRepo.UpdatePort(ctx, port); err != nil {
+		log.Printf("[CustomerService] gagal menandai port ODP %s dipakai: %v", portID, err)
+	}
+}
+
+// releaseODPPort membebaskan port (customer_id NULL, status available).
+func (s *CustomerService) releaseODPPort(ctx context.Context, portID string) {
+	if s.odpRepo == nil || portID == "" {
+		return
+	}
+	port, err := s.odpRepo.FindPortByID(ctx, portID)
+	if err != nil || port == nil {
+		return
+	}
+	port.CustomerID = nil
+	if port.Status == "used" {
+		port.Status = "available"
+	}
+	if err := s.odpRepo.UpdatePort(ctx, port); err != nil {
+		log.Printf("[CustomerService] gagal membebaskan port ODP %s: %v", portID, err)
+	}
 }
 
 func (s *CustomerService) WithCWMPURL(url string) *CustomerService {
@@ -209,6 +277,12 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 		}
 	}
 
+	if input.ODPPortID != nil && *input.ODPPortID != "" {
+		if err := s.validateODPPort(ctx, input.TenantID, *input.ODPPortID, ""); err != nil {
+			return nil, err
+		}
+	}
+
 	code, err := s.NextCode(ctx, input.TenantID)
 	if err != nil {
 		return nil, err
@@ -307,6 +381,10 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 	}
 	if err != nil {
 		return nil, ErrCustomerCodeExists
+	}
+
+	if customer.ODPPortID != nil && *customer.ODPPortID != "" {
+		s.occupyODPPort(ctx, *customer.ODPPortID, customer.ID)
 	}
 
 	if input.ConnectionType == "ftth" && input.SerialNumber != "" && s.ontRepo != nil {
@@ -646,8 +724,26 @@ func (s *CustomerService) UpdateAccess(ctx context.Context, tenantID, customerID
 	if input.RouterID != nil {
 		customer.RouterID = input.RouterID
 	}
+
+	// ODP port: nil = tidak diubah, "" = lepas, nilai = pindah/tautan baru.
+	// Pindah dari FTTH ke tipe lain otomatis melepas port.
+	oldODPPortID := stringPtrValue(customer.ODPPortID)
+	newODPPortID := oldODPPortID
 	if input.ODPPortID != nil {
-		customer.ODPPortID = input.ODPPortID
+		newODPPortID = *input.ODPPortID
+	}
+	if customer.ConnectionType != "ftth" {
+		newODPPortID = ""
+	}
+	if newODPPortID != oldODPPortID && newODPPortID != "" {
+		if err := s.validateODPPort(ctx, tenantID, newODPPortID, customerID); err != nil {
+			return nil, err
+		}
+	}
+	if newODPPortID == "" {
+		customer.ODPPortID = nil
+	} else {
+		customer.ODPPortID = &newODPPortID
 	}
 
 	if err := s.customerRepo.Update(ctx, customer); err != nil {
@@ -657,6 +753,16 @@ func (s *CustomerService) UpdateAccess(ctx context.Context, tenantID, customerID
 		}
 		return nil, err
 	}
+
+	if newODPPortID != oldODPPortID {
+		if oldODPPortID != "" {
+			s.releaseODPPort(ctx, oldODPPortID)
+		}
+		if newODPPortID != "" {
+			s.occupyODPPort(ctx, newODPPortID, customerID)
+		}
+	}
+
 	return s.customerRepo.FindByID(ctx, tenantID, customerID)
 }
 
@@ -768,6 +874,11 @@ func (s *CustomerService) Delete(ctx context.Context, tenantID, customerID strin
 	}
 	if customer == nil {
 		return ErrCustomerNotFound
+	}
+	// Bebaskan port ODP dulu: FK hanya me-NULL-kan customer_id,
+	// tanpa ini status port tertinggal 'used' selamanya.
+	if customer.ODPPortID != nil {
+		s.releaseODPPort(ctx, *customer.ODPPortID)
 	}
 	return s.customerRepo.Delete(ctx, tenantID, customerID)
 }

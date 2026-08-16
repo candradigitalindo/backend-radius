@@ -123,10 +123,12 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		       p.id, p.name, p.bandwidth_up, p.bandwidth_down, p.price,
 		       p.burst_limit, p.address_list,
 		       rt.id, rt.name, rt.vpn_ip, COALESCE(rt.vpn_public_key,''), COALESCE(rt.legacy_vpn_ip,''), COALESCE(rt.nas_ip,''), rt.radius_secret, rt.coa_port,
+		       dp.odp_id, dp.port_number,
 		       EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active') AS is_online
 		FROM customers c
 		LEFT JOIN packages p ON c.package_id = p.id
 		LEFT JOIN routers rt ON c.router_id = rt.id
+		LEFT JOIN odp_ports dp ON c.odp_port_id = dp.id
 		WHERE c.id = $1 AND c.tenant_id = $2
 		LIMIT 1
 	`
@@ -138,6 +140,8 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 	var pkgPrice *int64
 	var rtJoinID, rtName, rtVPNIP, rtWGKey, rtLegacyIP, rtNASIP, rtRADIUSSecret *string
 	var rtCoAPort *int
+	var dpODPID *string
+	var dpPortNumber *int
 	var isOnline bool
 
 	err := r.db.QueryRow(ctx, query, customerID, tenantID).Scan(
@@ -153,6 +157,7 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 		&pkgJoinID, &pkgName, &pkgBandwidthUp, &pkgBandwidthDown, &pkgPrice,
 		&pkgBurstLimit, &pkgAddressList,
 		&rtJoinID, &rtName, &rtVPNIP, &rtWGKey, &rtLegacyIP, &rtNASIP, &rtRADIUSSecret, &rtCoAPort,
+		&dpODPID, &dpPortNumber,
 		&isOnline,
 	)
 	if err != nil {
@@ -165,6 +170,12 @@ func (r *customerRepository) FindByID(ctx context.Context, tenantID, customerID 
 	c.PackageID = pkgID
 	c.RouterID = rtID
 	c.ODPPortID = odpPortID
+	if odpPortID != nil && dpODPID != nil {
+		c.ODPPort = &model.ODPPort{ID: *odpPortID, ODPID: *dpODPID}
+		if dpPortNumber != nil {
+			c.ODPPort.PortNumber = *dpPortNumber
+		}
+	}
 
 	if c.Status == "isolated" {
 		c.ConnectionStatus = "isolated"

@@ -64,15 +64,15 @@ func (r *odpRepository) Create(ctx context.Context, odp *model.ODP) error {
 
 	query := `
 		INSERT INTO odps (
-			id, tenant_id, olt_id, pon_port_id, splitter_ratio, name, address,
+			id, tenant_id, olt_id, splitter_id, pon_port_id, splitter_ratio, name, address,
 			latitude, longitude, total_ports, sequence, cable_length_m,
 			ratio_percent, splitter_type, power_level_dbm, status, notes,
 			created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 	`
 
 	_, err := r.db.Exec(ctx, query,
-		odp.ID, odp.TenantID, odp.OLTID, odp.PONPortID, odp.SplitterRatio,
+		odp.ID, odp.TenantID, odp.OLTID, odp.SplitterID, odp.PONPortID, odp.SplitterRatio,
 		odp.Name, odp.Address,
 		odp.Latitude, odp.Longitude, odp.TotalPorts,
 		odp.Sequence, odp.CableLengthM, odp.RatioPercent, odp.SplitterType,
@@ -84,7 +84,7 @@ func (r *odpRepository) Create(ctx context.Context, odp *model.ODP) error {
 
 func (r *odpRepository) FindByID(ctx context.Context, tenantID, odpID string) (*model.ODP, error) {
 	query := `
-		SELECT o.id, o.tenant_id, o.olt_id, o.pon_port_id, o.splitter_ratio,
+		SELECT o.id, o.tenant_id, o.olt_id, o.splitter_id, o.pon_port_id, o.splitter_ratio,
 		       o.name, o.address,
 		       o.latitude, o.longitude, o.total_ports,
 		       o.sequence, COALESCE(o.cable_length_m,0), COALESCE(o.ratio_percent,0),
@@ -101,7 +101,7 @@ func (r *odpRepository) FindByID(ctx context.Context, tenantID, odpID string) (*
 	var odp model.ODP
 	var oltName *string
 	err := r.db.QueryRow(ctx, query, odpID, tenantID).Scan(
-		&odp.ID, &odp.TenantID, &odp.OLTID, &odp.PONPortID, &odp.SplitterRatio,
+		&odp.ID, &odp.TenantID, &odp.OLTID, &odp.SplitterID, &odp.PONPortID, &odp.SplitterRatio,
 		&odp.Name, &odp.Address,
 		&odp.Latitude, &odp.Longitude, &odp.TotalPorts,
 		&odp.Sequence, &odp.CableLengthM, &odp.RatioPercent,
@@ -134,16 +134,16 @@ func (r *odpRepository) Update(ctx context.Context, odp *model.ODP) error {
 
 	query := `
 		UPDATE odps SET
-			olt_id = $1, pon_port_id = $2, splitter_ratio = $3, name = $4, address = $5,
-			latitude = $6, longitude = $7, total_ports = $8,
-			sequence = $9, cable_length_m = $10, ratio_percent = $11,
-			splitter_type = $12, power_level_dbm = $13, status = $14, notes = $15,
-			updated_at = $16
-		WHERE id = $17 AND tenant_id = $18
+			olt_id = $1, splitter_id = $2, pon_port_id = $3, splitter_ratio = $4, name = $5, address = $6,
+			latitude = $7, longitude = $8, total_ports = $9,
+			sequence = $10, cable_length_m = $11, ratio_percent = $12,
+			splitter_type = $13, power_level_dbm = $14, status = $15, notes = $16,
+			updated_at = $17
+		WHERE id = $18 AND tenant_id = $19
 	`
 
 	_, err := r.db.Exec(ctx, query,
-		odp.OLTID, odp.PONPortID, odp.SplitterRatio, odp.Name, odp.Address,
+		odp.OLTID, odp.SplitterID, odp.PONPortID, odp.SplitterRatio, odp.Name, odp.Address,
 		odp.Latitude, odp.Longitude, odp.TotalPorts,
 		odp.Sequence, odp.CableLengthM, odp.RatioPercent,
 		odp.SplitterType, odp.PowerLevelDBm, odp.Status, odp.Notes,
@@ -195,7 +195,7 @@ func (r *odpRepository) List(ctx context.Context, tenantID string, filter ODPFil
 	offset := (filter.Page - 1) * filter.PerPage
 
 	dataQuery := fmt.Sprintf(`
-		SELECT o.id, o.tenant_id, o.olt_id, o.pon_port_id, o.splitter_ratio,
+		SELECT o.id, o.tenant_id, o.olt_id, o.splitter_id, o.pon_port_id, o.splitter_ratio,
 		       o.name, o.address,
 		       o.latitude, o.longitude, o.total_ports,
 		       o.sequence, COALESCE(o.cable_length_m,0), COALESCE(o.ratio_percent,0),
@@ -223,7 +223,7 @@ func (r *odpRepository) List(ctx context.Context, tenantID string, filter ODPFil
 		var odp model.ODP
 		var oltName *string
 		if err := rows.Scan(
-			&odp.ID, &odp.TenantID, &odp.OLTID, &odp.PONPortID, &odp.SplitterRatio,
+			&odp.ID, &odp.TenantID, &odp.OLTID, &odp.SplitterID, &odp.PONPortID, &odp.SplitterRatio,
 			&odp.Name, &odp.Address,
 			&odp.Latitude, &odp.Longitude, &odp.TotalPorts,
 			&odp.Sequence, &odp.CableLengthM, &odp.RatioPercent,

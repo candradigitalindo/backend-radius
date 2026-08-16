@@ -159,6 +159,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	customerService.WithBandwidth(bandwidthRepo)
 	customerService.WithReward(rewardService)
 	customerService.WithTenant(tenantRepo, deps.Config.App.URL)
+	customerService.WithODPRepo(odpRepo)
 	invoiceService.WithReward(rewardService)
 	invoiceService.WithReseller(resellerService)
 

@@ -31,6 +31,7 @@ type customerDetailResponse struct {
 	Package      *customerPackageResponse   `json:"package,omitempty"`
 	Router       *customerRouterResponse    `json:"router,omitempty"`
 	ONT          *customerONTResponse       `json:"ont,omitempty"`
+	ODPPort      *model.ODPPort             `json:"odp_port,omitempty"`
 	CreatedAt    time.Time                  `json:"created_at"`
 	UpdatedAt    time.Time                  `json:"updated_at"`
 }
@@ -185,6 +186,7 @@ func newCustomerDetailResponse(customer *model.Customer) *customerDetailResponse
 		PackageID:    customer.PackageID,
 		RouterID:     customer.RouterID,
 		ODPPortID:    customer.ODPPortID,
+		ODPPort:      customer.ODPPort,
 		ResellerID:   customer.ResellerID,
 		Status:       customer.Status,
 		Notes:        customer.Notes,

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
@@ -30,6 +31,7 @@ func NewODPService(odpRepo repository.ODPRepository, customerRepo repository.Cus
 type CreateODPInput struct {
 	TenantID      string
 	OLTID         *string
+	SplitterID    *string
 	PONPortID     *string
 	SplitterRatio *string
 	Name          string
@@ -47,6 +49,7 @@ type CreateODPInput struct {
 
 type UpdateODPInput struct {
 	OLTID         *string
+	SplitterID    *string
 	PONPortID     *string
 	SplitterRatio *string
 	Name          string
@@ -66,6 +69,7 @@ func (s *ODPService) Create(ctx context.Context, input CreateODPInput) (*model.O
 	odp := &model.ODP{
 		TenantID:      input.TenantID,
 		OLTID:         input.OLTID,
+		SplitterID:    input.SplitterID,
 		PONPortID:     input.PONPortID,
 		SplitterRatio: input.SplitterRatio,
 		Name:          input.Name,
@@ -92,7 +96,38 @@ func (s *ODPService) Create(ctx context.Context, input CreateODPInput) (*model.O
 	if err := s.odpRepo.Create(ctx, odp); err != nil {
 		return nil, err
 	}
+
+	// Materialisasi baris port 1..TotalPorts. Tanpa ini dropdown port di form
+	// pelanggan kosong dan pelanggan FTTH tidak bisa ditautkan ke ODP.
+	s.ensurePorts(ctx, odp)
+
 	return s.odpRepo.FindByID(ctx, odp.TenantID, odp.ID)
+}
+
+// ensurePorts membuat baris odp_ports yang belum ada sampai nomor TotalPorts.
+// Port yang sudah ada (termasuk yang sedang dipakai pelanggan) tidak disentuh.
+func (s *ODPService) ensurePorts(ctx context.Context, odp *model.ODP) {
+	if odp == nil || odp.TotalPorts <= 0 {
+		return
+	}
+	existing, err := s.odpRepo.ListPorts(ctx, odp.ID)
+	if err != nil {
+		log.Printf("[ODPService] gagal membaca port ODP %s: %v", odp.ID, err)
+		return
+	}
+	have := make(map[int]bool, len(existing))
+	for _, p := range existing {
+		have[p.PortNumber] = true
+	}
+	for n := 1; n <= odp.TotalPorts; n++ {
+		if have[n] {
+			continue
+		}
+		port := &model.ODPPort{ODPID: odp.ID, PortNumber: n, Status: "available"}
+		if err := s.odpRepo.CreatePort(ctx, port); err != nil {
+			log.Printf("[ODPService] gagal membuat port %d ODP %s: %v", n, odp.ID, err)
+		}
+	}
 }
 
 func (s *ODPService) GetByID(ctx context.Context, tenantID, odpID string) (*model.ODP, error) {
@@ -117,6 +152,7 @@ func (s *ODPService) Update(ctx context.Context, tenantID, odpID string, input U
 	}
 
 	odp.OLTID = input.OLTID
+	odp.SplitterID = input.SplitterID
 	odp.PONPortID = input.PONPortID
 	odp.SplitterRatio = input.SplitterRatio
 	odp.Name = input.Name
@@ -139,6 +175,10 @@ func (s *ODPService) Update(ctx context.Context, tenantID, odpID string, input U
 	if err := s.odpRepo.Update(ctx, odp); err != nil {
 		return nil, err
 	}
+
+	// Tambah baris port bila TotalPorts dinaikkan.
+	s.ensurePorts(ctx, odp)
+
 	return s.odpRepo.FindByID(ctx, tenantID, odpID)
 }
 
@@ -150,6 +190,19 @@ func (s *ODPService) Delete(ctx context.Context, tenantID, odpID string) error {
 	if odp == nil {
 		return ErrODPNotFound
 	}
+
+	// Lepas rujukan pelanggan ke semua port ODP ini — FK customers.odp_port_id
+	// bertipe NO ACTION, tanpa ini cascade penghapusan port ikut gagal.
+	ports, err := s.odpRepo.ListPorts(ctx, odpID)
+	if err != nil {
+		return err
+	}
+	for _, p := range ports {
+		if err := s.customerRepo.ClearODPPortID(ctx, p.ID); err != nil {
+			return err
+		}
+	}
+
 	return s.odpRepo.Delete(ctx, tenantID, odpID)
 }
 
@@ -385,6 +438,13 @@ func (s *ODPService) DeletePort(ctx context.Context, tenantID, portID string) er
 	if odp == nil {
 		return ErrODPPortNotFound
 	}
+
+	// Lepas rujukan pelanggan dulu — FK customers.odp_port_id bertipe NO ACTION,
+	// tanpa ini penghapusan port yang masih ditunjuk pelanggan gagal.
+	if err := s.customerRepo.ClearODPPortID(ctx, portID); err != nil {
+		return err
+	}
+
 	return s.odpRepo.DeletePort(ctx, portID)
 }
 

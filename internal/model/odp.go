@@ -6,6 +6,7 @@ type ODP struct {
 	ID            string    `json:"id"`
 	TenantID      string    `json:"tenant_id"`
 	OLTID         *string   `json:"olt_id,omitempty"`
+	SplitterID    *string   `json:"splitter_id,omitempty"`
 	PONPortID     *string   `json:"pon_port_id,omitempty"`
 	SplitterRatio *string   `json:"splitter_ratio,omitempty"`
 	Name          string    `json:"name"`
