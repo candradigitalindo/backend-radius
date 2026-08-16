@@ -485,6 +485,9 @@ func (s *InvoiceService) GenerateMonthly(ctx context.Context, tenantID string, m
 		if now.Before(invoiceDate) {
 			continue
 		}
+		if joinedAfterCycleStart(c, invoiceDate) {
+			continue
+		}
 
 		price := int64(0)
 		if c.Package != nil {
@@ -540,6 +543,19 @@ func (s *InvoiceService) GenerateMonthly(ctx context.Context, tenantID string, m
 	return len(invoices), nil
 }
 
+// joinedAfterCycleStart melaporkan apakah pelanggan bergabung setelah tanggal
+// invoice siklus tersebut. Pelanggan seperti ini belum ikut ditagih — invoice
+// pertamanya terbit di siklus berikutnya. Tanpa guard ini, pelanggan hasil impor
+// tengah siklus langsung menerima invoice yang sudah lewat jatuh tempo dan kena
+// auto-isolir keesokan harinya.
+func joinedAfterCycleStart(c model.Customer, invoiceDate time.Time) bool {
+	joined := c.JoinDate
+	if joined.IsZero() {
+		joined = c.CreatedAt
+	}
+	return joined.After(invoiceDate)
+}
+
 // GenerateScheduled generates invoices for the billing cycle that is active today for each customer.
 // This is used by the daily worker so explicit billing_date values such as 24 -> due 1 are respected.
 func (s *InvoiceService) GenerateScheduled(ctx context.Context, tenantID string, now time.Time) (int, error) {
@@ -584,6 +600,9 @@ func (s *InvoiceService) GenerateScheduled(ctx context.Context, tenantID string,
 
 		invoiceDate, dueDate := billing.CycleDates(sched.InvoiceDay, sched.DueDay, month, year)
 		if now.Before(invoiceDate) {
+			continue
+		}
+		if joinedAfterCycleStart(c, invoiceDate) {
 			continue
 		}
 
