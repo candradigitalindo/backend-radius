@@ -678,7 +678,10 @@ func (s *RouterService) buildMikroTikScript(cfg *MikroTikConfig) string {
 	b.WriteString(fmt.Sprintf("/radius add service=hotspot,login,ppp address=%s secret=\"%s\" authentication-port=%s accounting-port=%s\n",
 		cfg.RADIUSAddress, cfg.RADIUSSecret, cfg.RADIUSAuthPort, cfg.RADIUSAcctPort))
 	b.WriteString(fmt.Sprintf("/radius incoming set accept=yes port=%d\n", cfg.CoAPort))
-	b.WriteString("/ppp aaa set use-radius=yes accounting=yes interim-update=5m\n\n")
+	b.WriteString("/ppp aaa set use-radius=yes accounting=yes interim-update=5m\n")
+	// One session per host: saat pelanggan redial dari MAC yang sama, router
+	// langsung memutus sesi lama — mencegah interface ganda <pppoe-user-1>.
+	b.WriteString("/interface pppoe-server server set [find] one-session-per-host=yes\n\n")
 	step++
 
 	b.WriteString(fmt.Sprintf("# --- %d. Heartbeat Monitoring ---\n", step))

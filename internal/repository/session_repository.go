@@ -11,6 +11,16 @@ import (
 	"github.com/candrasyahputra/radius-server/internal/pkg/id"
 )
 
+// StaleSession identifies a session terminated by the stale-session cleaner,
+// with enough context to release its IPAM IP and CoA-disconnect it on the NAS.
+type StaleSession struct {
+	SessionID    string
+	Username     string
+	NASIPAddress string
+	CustomerID   *string
+	RouterID     *string
+}
+
 // InterimResult holds the previous octets so the caller can compute deltas.
 type InterimResult struct {
 	TenantID        string
@@ -30,7 +40,7 @@ type SessionRepository interface {
 	TrafficByRouter(ctx context.Context, tenantID, routerID string) (*model.RouterTraffic, error)
 	CleanStaleSessions(ctx context.Context, tenantID, routerID string) (int, error)
 	CleanAllStaleSessions(ctx context.Context, tenantID string) (int, error)
-	CleanAllStaleSessionsWithCustomers(ctx context.Context, tenantID string) (int, []string, error)
+	CleanAllStaleSessionsWithCustomers(ctx context.Context, tenantID string) ([]StaleSession, error)
 	InsertBandwidthSample(ctx context.Context, tenantID string, customerID *string, sessionID string, intervalSec int, downloadBps, uploadBps int64) error
 }
 
@@ -280,38 +290,33 @@ func (r *sessionRepository) CleanAllStaleSessions(ctx context.Context, tenantID 
 }
 
 // CleanAllStaleSessionsWithCustomers is like CleanAllStaleSessions but also returns
-// the customer IDs of terminated sessions so IPAM IPs can be released.
-func (r *sessionRepository) CleanAllStaleSessionsWithCustomers(ctx context.Context, tenantID string) (int, []string, error) {
+// the terminated sessions so callers can release IPAM IPs and send CoA
+// Disconnect to the NAS for any router-side ghost session.
+func (r *sessionRepository) CleanAllStaleSessionsWithCustomers(ctx context.Context, tenantID string) ([]StaleSession, error) {
 	threshold := time.Now().Add(-10 * time.Minute)
 	query := `
 		UPDATE radius_sessions
 		SET status = 'stopped', ended_at = NOW(), terminate_cause = 'NAS-Timeout'
 		WHERE tenant_id = $1 AND status = 'active'
 		  AND ((updated_at IS NULL AND started_at < $2) OR updated_at < $2)
-		RETURNING customer_id
+		RETURNING session_id, username, nas_ip_address, customer_id, router_id
 	`
 
 	rows, err := r.db.Query(ctx, query, tenantID, threshold)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 
-	var customerIDs []string
-	seen := make(map[string]bool)
-	count := 0
+	var stale []StaleSession
 	for rows.Next() {
-		var cid *string
-		if err := rows.Scan(&cid); err != nil {
-			return 0, nil, err
+		var s StaleSession
+		if err := rows.Scan(&s.SessionID, &s.Username, &s.NASIPAddress, &s.CustomerID, &s.RouterID); err != nil {
+			return nil, err
 		}
-		count++
-		if cid != nil && !seen[*cid] {
-			seen[*cid] = true
-			customerIDs = append(customerIDs, *cid)
-		}
+		stale = append(stale, s)
 	}
-	return count, customerIDs, nil
+	return stale, rows.Err()
 }
 
 func (r *sessionRepository) InsertBandwidthSample(ctx context.Context, tenantID string, customerID *string, sessionID string, intervalSec int, downloadBps, uploadBps int64) error {

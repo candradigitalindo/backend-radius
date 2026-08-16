@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/candrasyahputra/radius-server/internal/model"
+	"github.com/candrasyahputra/radius-server/internal/pkg/radius"
 	"github.com/candrasyahputra/radius-server/internal/pkg/whatsapp"
 	"github.com/candrasyahputra/radius-server/internal/repository"
 	"github.com/candrasyahputra/radius-server/internal/service"
@@ -427,18 +429,51 @@ func (h *Handlers) HandleCleanSessions(ctx context.Context, t *asynq.Task) error
 	if h.SessionRepo == nil {
 		return nil
 	}
-	cleaned, customerIDs, err := h.SessionRepo.CleanAllStaleSessionsWithCustomers(ctx, p.TenantID)
+	stale, err := h.SessionRepo.CleanAllStaleSessionsWithCustomers(ctx, p.TenantID)
 	if err != nil {
 		return fmt.Errorf("clean stale sessions (tenant %s): %w", p.TenantID, err)
 	}
-	if cleaned > 0 {
-		log.Printf("[worker] clean-sessions tenant %s: %d stale session(s) terminated", p.TenantID, cleaned)
+	if len(stale) > 0 {
+		log.Printf("[worker] clean-sessions tenant %s: %d stale session(s) terminated", p.TenantID, len(stale))
 		// Release IPAM IPs for customers whose sessions were cleaned up
 		if h.IPAMRepo != nil {
-			for _, cid := range customerIDs {
-				if err := h.IPAMRepo.ReleaseAllByCustomerID(ctx, cid); err != nil {
-					log.Printf("[worker] clean-sessions: failed to release IPAM IP for customer %s: %v", cid, err)
+			seen := make(map[string]bool)
+			for _, s := range stale {
+				if s.CustomerID == nil || seen[*s.CustomerID] {
+					continue
 				}
+				seen[*s.CustomerID] = true
+				if err := h.IPAMRepo.ReleaseAllByCustomerID(ctx, *s.CustomerID); err != nil {
+					log.Printf("[worker] clean-sessions: failed to release IPAM IP for customer %s: %v", *s.CustomerID, err)
+				}
+			}
+		}
+		// A session stale in the DB may still be alive on the router (ghost
+		// <pppoe-...> interface that later collides into <pppoe-...-1> on
+		// redial). Send CoA Disconnect so the NAS converges with the DB.
+		if h.RouterRepo != nil {
+			routers := make(map[string]*model.Router)
+			for _, s := range stale {
+				if s.RouterID == nil {
+					continue
+				}
+				rt, ok := routers[*s.RouterID]
+				if !ok {
+					rt, _ = h.RouterRepo.FindByIDOnly(ctx, *s.RouterID)
+					routers[*s.RouterID] = rt
+				}
+				if rt == nil || rt.CoAPort <= 0 || rt.RADIUSSecret == "" {
+					continue
+				}
+				addr := s.NASIPAddress
+				if addr == "" {
+					addr = rt.CoAAddress()
+				}
+				go func(addr string, port int, secret, user, sess string) {
+					if err := radius.DisconnectUser(addr, port, secret, user, sess); err != nil {
+						log.Printf("[worker] clean-sessions: CoA disconnect failed user=%s session=%s nas=%s: %v", user, sess, addr, err)
+					}
+				}(addr, rt.CoAPort, rt.RADIUSSecret, s.Username, s.SessionID)
 			}
 		}
 	}
