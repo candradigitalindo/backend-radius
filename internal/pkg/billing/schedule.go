@@ -72,6 +72,22 @@ func CurrentCycleDates(now time.Time, invoiceDay, dueDay int) (time.Time, time.T
 	return CycleDates(invoiceDay, dueDay, month, year)
 }
 
+// UpcomingCycleDates seperti CurrentCycleDates, tetapi bila jatuh tempo siklus
+// berjalan sudah lewat (per tanggal), maju ke siklus berikutnya. Dipakai untuk
+// tampilan "invoice/jatuh tempo berikutnya" saat pelanggan belum punya invoice
+// berjalan — tanggal yang sudah lewat tanpa invoice tidak bermakna, mis.
+// pelanggan baru yang bergabung setelah tanggal invoice siklus berjalan.
+func UpcomingCycleDates(now time.Time, invoiceDay, dueDay int) (time.Time, time.Time) {
+	invoiceDate, dueDate := CurrentCycleDates(now, invoiceDay, dueDay)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if dueDate.Before(today) {
+		month, year := CurrentDuePeriod(now, invoiceDay, dueDay)
+		next := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+		invoiceDate, dueDate = CycleDates(invoiceDay, dueDay, int(next.Month()), next.Year())
+	}
+	return invoiceDate, dueDate
+}
+
 func normalizedInvoiceDay(invoiceDay, dueDay int) int {
 	if invoiceDay <= 0 {
 		return InvoiceDayFromDueDay(dueDay)

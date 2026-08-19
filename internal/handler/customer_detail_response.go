@@ -406,7 +406,7 @@ func deriveCustomerBillingDates(customer *model.Customer, now time.Time) (time.T
 	invoiceDay := normalizedCustomerInvoiceDay(customer, deadlineDay)
 
 	if customer == nil || customer.CurrentInvoice == nil {
-		return billing.CurrentCycleDates(now, invoiceDay, deadlineDay)
+		return billing.UpcomingCycleDates(now, invoiceDay, deadlineDay)
 	}
 
 	if customer.BillingType != "fixed" && customer.CurrentInvoice.Status == "paid" && customer.CurrentInvoice.PaidAt != nil && customer.CurrentInvoice.PaidAt.After(customer.CurrentInvoice.DueDate) {
@@ -417,7 +417,7 @@ func deriveCustomerBillingDates(customer *model.Customer, now time.Time) (time.T
 	dueMonth := customer.CurrentInvoice.PeriodMonth
 	dueYear := customer.CurrentInvoice.PeriodYear
 	if dueMonth <= 0 || dueYear <= 0 {
-		return billing.CurrentCycleDates(now, invoiceDay, deadlineDay)
+		return billing.UpcomingCycleDates(now, invoiceDay, deadlineDay)
 	}
 
 	if customer.CurrentInvoice.Status == "paid" {
