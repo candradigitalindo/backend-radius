@@ -27,25 +27,28 @@ func TestParseSplitRatio(t *testing.T) {
 type fakeODPRepo struct {
 	repository.ODPRepository
 	splitters map[string]*model.Splitter
-	odpCount  map[string]int            // splitterID -> jumlah ODP anak
-	subCount  map[string]int            // splitterID -> jumlah sub-splitter
-	lineTaken map[string]map[int]string // splitterID -> line -> nama ODP pemakai
+	odpCount  map[string]int                    // splitterID -> keluaran terpakai ODP
+	subCount  map[string]int                    // splitterID -> jumlah sub-splitter
+	lineSeq   map[string]map[int]map[int]string // splitterID -> line -> sequence -> nama ODP
 }
 
 func (f *fakeODPRepo) FindSplitterByID(_ context.Context, _, id string) (*model.Splitter, error) {
 	return f.splitters[id], nil
 }
-func (f *fakeODPRepo) CountODPsBySplitter(_ context.Context, _, splitterID, _ string) (int, error) {
+func (f *fakeODPRepo) CountSplitterOutputsUsed(_ context.Context, _, splitterID, _ string) (int, error) {
 	return f.odpCount[splitterID], nil
 }
 func (f *fakeODPRepo) CountChildSplitters(_ context.Context, _, parentID, _ string) (int, error) {
 	return f.subCount[parentID], nil
 }
-func (f *fakeODPRepo) FindODPBySplitterLine(_ context.Context, _, splitterID string, line int, _ string) (*model.ODP, error) {
-	if name, ok := f.lineTaken[splitterID][line]; ok {
+func (f *fakeODPRepo) FindODPBySplitterLineSeq(_ context.Context, _, splitterID string, line, sequence int, _ string) (*model.ODP, error) {
+	if name, ok := f.lineSeq[splitterID][line][sequence]; ok {
 		return &model.ODP{Name: name}, nil
 	}
 	return nil, nil
+}
+func (f *fakeODPRepo) LineOccupied(_ context.Context, _, splitterID string, line int, _ string) (bool, error) {
+	return len(f.lineSeq[splitterID][line]) > 0, nil
 }
 
 func strp(s string) *string { return &s }
@@ -56,9 +59,9 @@ func TestValidateODPParent(t *testing.T) {
 		splitters: map[string]*model.Splitter{
 			"odc1": {ID: "odc1", Name: "ODC-1", SplitterType: "1:4"},
 		},
-		odpCount:  map[string]int{"odc1": 3},
-		subCount:  map[string]int{},
-		lineTaken: map[string]map[int]string{"odc1": {2: "ODP-LAMA"}},
+		odpCount: map[string]int{"odc1": 3},
+		subCount: map[string]int{},
+		lineSeq:  map[string]map[int]map[int]string{"odc1": {2: {1: "ODP-LAMA"}}},
 	}
 	svc := &ODPService{odpRepo: repo}
 	ctx := context.Background()
@@ -78,17 +81,24 @@ func TestValidateODPParent(t *testing.T) {
 		t.Fatalf("ODC ghost harus ErrSplitterNotFound, dapat: %v", err)
 	}
 
-	// Cabang ke-4 dari 1:4 (3 terpakai) masih boleh.
-	odp = &model.ODP{TenantID: "t", SplitterID: strp("odc1"), SplitterLine: intp(1)}
+	// Keluaran ke-4 dari 1:4 (3 terpakai) masih boleh.
+	odp = &model.ODP{TenantID: "t", SplitterID: strp("odc1"), SplitterLine: intp(1), Sequence: 1}
 	if err := svc.validateODPParent(ctx, odp); err != nil {
-		t.Fatalf("cabang ke-4 dari 1:4 harus valid, dapat: %v", err)
+		t.Fatalf("keluaran ke-4 dari 1:4 harus valid, dapat: %v", err)
 	}
 
-	// Kapasitas penuh: 4 dari 4 terpakai.
+	// Kapasitas penuh: 4 dari 4 keluaran terpakai — line BARU ditolak.
 	repo.odpCount["odc1"] = 4
 	odp = &model.ODP{TenantID: "t", SplitterID: strp("odc1")}
 	if err := svc.validateODPParent(ctx, odp); !errors.Is(err, ErrTopology) {
 		t.Fatalf("ODC penuh harus ErrTopology, dapat: %v", err)
+	}
+
+	// Tapi MENYAMBUNG rantai line yang sudah ada tetap boleh walau penuh
+	// (tidak memakan keluaran baru) — line 2 sudah berpenghuni urutan 1.
+	odp = &model.ODP{TenantID: "t", SplitterID: strp("odc1"), SplitterLine: intp(2), Sequence: 2}
+	if err := svc.validateODPParent(ctx, odp); err != nil {
+		t.Fatalf("menyambung rantai line 2 harus valid, dapat: %v", err)
 	}
 	repo.odpCount["odc1"] = 3
 
@@ -98,10 +108,29 @@ func TestValidateODPParent(t *testing.T) {
 		t.Fatalf("line 5 pada 1:4 harus ErrTopology, dapat: %v", err)
 	}
 
-	// Line sudah dipakai ODP lain.
-	odp = &model.ODP{TenantID: "t", SplitterID: strp("odc1"), SplitterLine: intp(2)}
+	// Posisi (line, urutan) sudah dipakai ODP lain.
+	odp = &model.ODP{TenantID: "t", SplitterID: strp("odc1"), SplitterLine: intp(2), Sequence: 1}
 	if err := svc.validateODPParent(ctx, odp); !errors.Is(err, ErrTopology) {
-		t.Fatalf("line ganda harus ErrTopology, dapat: %v", err)
+		t.Fatalf("posisi line+urutan ganda harus ErrTopology, dapat: %v", err)
+	}
+}
+
+func TestLineInputPower(t *testing.T) {
+	// Rantai NET.id per line: tap 10% -> 20% -> 50% -> sisa (target seq 4).
+	chain := []model.ODP{
+		{ID: "o1", Sequence: 1, RatioPercent: 10},
+		{ID: "o2", Sequence: 2, RatioPercent: 20},
+		{ID: "o3", Sequence: 3, RatioPercent: 50},
+		{ID: "o4", Sequence: 4, RatioPercent: 100},
+	}
+	// Pass-through: 90% (-0.46 dB), 80% (-0.97 dB), 50% (-3.01 dB) ≈ -4.44 dB.
+	got := lineInputPower(0, chain, "o4", 4)
+	if got < -4.6 || got > -4.3 {
+		t.Fatalf("input power ODP4 harus ~-4.44 dB dari awal, dapat: %.2f", got)
+	}
+	// ODP pertama: belum ada pendahulu — power = start.
+	if got := lineInputPower(-10, chain, "o1", 1); got != -10 {
+		t.Fatalf("ODP urutan 1 harus terima power awal, dapat: %.2f", got)
 	}
 }
 

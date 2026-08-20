@@ -39,6 +39,11 @@ type ODP struct {
 	RootPONPortNumber *int       `json:"root_pon_port_number,omitempty"`
 	RootSFPRxPower    *float64   `json:"root_sfp_rx_power,omitempty"`
 
+	// Rantai ODP se-line pada ODC yang sama (urut sequence, detail saja), dan
+	// power efektif yang masuk ke ODP ini setelah tap ODP-ODP pendahulunya.
+	LineChain      []ODP    `json:"line_chain,omitempty"`
+	LineInputPower *float64 `json:"line_input_power,omitempty"`
+
 	Ports []ODPPort `json:"ports,omitempty"`
 	OLT   *OLT      `json:"olt,omitempty"`
 }

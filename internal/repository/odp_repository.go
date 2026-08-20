@@ -31,9 +31,11 @@ type ODPRepository interface {
 	UpdateSplitter(ctx context.Context, s *model.Splitter) error
 	DeleteSplitter(ctx context.Context, tenantID, splitterID string) error
 	ListSplitters(ctx context.Context, tenantID string, filter SplitterFilter) ([]model.Splitter, int, error)
-	CountODPsBySplitter(ctx context.Context, tenantID, splitterID, excludeODPID string) (int, error)
+	CountSplitterOutputsUsed(ctx context.Context, tenantID, splitterID, excludeODPID string) (int, error)
 	CountChildSplitters(ctx context.Context, tenantID, parentID, excludeSplitterID string) (int, error)
-	FindODPBySplitterLine(ctx context.Context, tenantID, splitterID string, line int, excludeODPID string) (*model.ODP, error)
+	LineOccupied(ctx context.Context, tenantID, splitterID string, line int, excludeODPID string) (bool, error)
+	FindODPBySplitterLineSeq(ctx context.Context, tenantID, splitterID string, line, sequence int, excludeODPID string) (*model.ODP, error)
+	ListBySplitterLine(ctx context.Context, tenantID, splitterID string, line int) ([]model.ODP, error)
 	GetSplitterChain(ctx context.Context, tenantID, splitterID string) ([]model.Splitter, error)
 	GetPONPortRoot(ctx context.Context, ponPortID string) (*model.PONPort, *model.OLT, error)
 }
@@ -559,14 +561,30 @@ func (r *odpRepository) ListSplitters(ctx context.Context, tenantID string, filt
 	return splitters, total, nil
 }
 
-// CountODPsBySplitter menghitung ODP anak sebuah ODC/splitter (excludeODPID
-// dikecualikan — dipakai saat update agar diri sendiri tidak terhitung).
-func (r *odpRepository) CountODPsBySplitter(ctx context.Context, tenantID, splitterID, excludeODPID string) (int, error) {
+// CountSplitterOutputsUsed menghitung berapa keluaran (line) ODC yang sudah
+// terpakai oleh ODP: line bernomor dihitung sekali per line (rantai ODP
+// se-line berbagi satu keluaran), ODP tanpa nomor line dihitung satu-satu.
+// excludeODPID dikecualikan — dipakai saat update agar diri sendiri tidak
+// terhitung.
+func (r *odpRepository) CountSplitterOutputsUsed(ctx context.Context, tenantID, splitterID, excludeODPID string) (int, error) {
 	var n int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM odps WHERE tenant_id = $1 AND splitter_id = $2 AND id <> $3`,
+		`SELECT COUNT(DISTINCT splitter_line) FILTER (WHERE splitter_line IS NOT NULL)
+		      + COUNT(*) FILTER (WHERE splitter_line IS NULL)
+		 FROM odps WHERE tenant_id = $1 AND splitter_id = $2 AND id <> $3`,
 		tenantID, splitterID, excludeODPID).Scan(&n)
 	return n, err
+}
+
+// LineOccupied melaporkan apakah sebuah line ODC sudah dipakai ODP lain
+// (rantai sudah ada — ODP baru di line yang sama tidak memakan keluaran baru).
+func (r *odpRepository) LineOccupied(ctx context.Context, tenantID, splitterID string, line int, excludeODPID string) (bool, error) {
+	var occupied bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM odps
+		 WHERE tenant_id = $1 AND splitter_id = $2 AND splitter_line = $3 AND id <> $4)`,
+		tenantID, splitterID, line, excludeODPID).Scan(&occupied)
+	return occupied, err
 }
 
 // CountChildSplitters menghitung sub-splitter di bawah sebuah ODC/splitter.
@@ -578,15 +596,15 @@ func (r *odpRepository) CountChildSplitters(ctx context.Context, tenantID, paren
 	return n, err
 }
 
-// FindODPBySplitterLine mencari ODP lain yang sudah memakai line keluaran
-// tertentu pada sebuah ODC (untuk validasi satu line = satu ODP).
-func (r *odpRepository) FindODPBySplitterLine(ctx context.Context, tenantID, splitterID string, line int, excludeODPID string) (*model.ODP, error) {
+// FindODPBySplitterLineSeq mencari ODP lain yang sudah menempati posisi
+// (line, urutan) tertentu pada sebuah ODC — satu posisi rantai = satu ODP.
+func (r *odpRepository) FindODPBySplitterLineSeq(ctx context.Context, tenantID, splitterID string, line, sequence int, excludeODPID string) (*model.ODP, error) {
 	var odp model.ODP
 	err := r.db.QueryRow(ctx,
 		`SELECT id, name FROM odps
-		 WHERE tenant_id = $1 AND splitter_id = $2 AND splitter_line = $3 AND id <> $4
+		 WHERE tenant_id = $1 AND splitter_id = $2 AND splitter_line = $3 AND sequence = $4 AND id <> $5
 		 LIMIT 1`,
-		tenantID, splitterID, line, excludeODPID).Scan(&odp.ID, &odp.Name)
+		tenantID, splitterID, line, sequence, excludeODPID).Scan(&odp.ID, &odp.Name)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -594,6 +612,38 @@ func (r *odpRepository) FindODPBySplitterLine(ctx context.Context, tenantID, spl
 		return nil, err
 	}
 	return &odp, nil
+}
+
+// ListBySplitterLine mengembalikan rantai ODP pada satu line ODC, urut sequence
+// — dipakai untuk perhitungan power berantai & tampilan rantai di detail.
+func (r *odpRepository) ListBySplitterLine(ctx context.Context, tenantID, splitterID string, line int) ([]model.ODP, error) {
+	query := `
+		SELECT id, tenant_id, splitter_id, splitter_line, name,
+		       sequence, COALESCE(cable_length_m,0), COALESCE(ratio_percent,0),
+		       splitter_type, power_level_dbm
+		FROM odps
+		WHERE tenant_id = $1 AND splitter_id = $2 AND splitter_line = $3
+		ORDER BY sequence ASC, created_at ASC
+	`
+	rows, err := r.db.Query(ctx, query, tenantID, splitterID, line)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var odps []model.ODP
+	for rows.Next() {
+		var o model.ODP
+		if err := rows.Scan(
+			&o.ID, &o.TenantID, &o.SplitterID, &o.SplitterLine, &o.Name,
+			&o.Sequence, &o.CableLengthM, &o.RatioPercent,
+			&o.SplitterType, &o.PowerLevelDBm,
+		); err != nil {
+			return nil, err
+		}
+		odps = append(odps, o)
+	}
+	return odps, rows.Err()
 }
 
 // GetSplitterChain mengembalikan rantai ODC dari splitter yang diminta sampai

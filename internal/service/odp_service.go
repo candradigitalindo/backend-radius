@@ -170,6 +170,22 @@ func (s *ODPService) GetByID(ctx context.Context, tenantID, odpID string) (*mode
 	return odp, nil
 }
 
+// splitterLossDB: redaman splitter pasif per rasio (dB) — selaras dengan tabel
+// SPLITTER_LOSS di frontend (useLinkBudget.ts).
+var splitterLossDB = map[string]float64{
+	"1:2": 3.70, "1:4": 7.40, "1:8": 10.38, "1:16": 13.50, "1:32": 17.10, "1:64": 20.50,
+}
+
+func splitterLoss(splitterType string) float64 {
+	if loss, ok := splitterLossDB[strings.ReplaceAll(splitterType, " ", "")]; ok {
+		return loss
+	}
+	if n := parseSplitRatio(splitterType); n > 1 {
+		return 10 * math.Log10(float64(n)) // pembagian ideal tanpa excess loss
+	}
+	return 0
+}
+
 // populateSplitterChain melengkapi ODP ber-induk ODC dengan rantai ODC sampai
 // root plus info PON port/OLT di ujungnya — untuk tampilan jalur & link budget.
 func (s *ODPService) populateSplitterChain(ctx context.Context, odp *model.ODP) {
@@ -195,6 +211,48 @@ func (s *ODPService) populateSplitterChain(ctx context.Context, odp *model.ODP) 
 	if olt != nil {
 		odp.RootOLTName = &olt.Name
 	}
+
+	// Rantai ODP se-line + power efektif masuk ODP ini setelah tap pendahulu.
+	if odp.SplitterLine == nil || pp.SFPRxPower == nil {
+		return
+	}
+	lineChain, err := s.odpRepo.ListBySplitterLine(ctx, odp.TenantID, *odp.SplitterID, *odp.SplitterLine)
+	if err != nil {
+		return
+	}
+	odp.LineChain = lineChain
+
+	start := *pp.SFPRxPower
+	for _, sp := range chain {
+		start -= splitterLoss(sp.SplitterType)
+	}
+	input := lineInputPower(start, lineChain, odp.ID, odp.Sequence)
+	odp.LineInputPower = &input
+}
+
+// lineInputPower menghitung power yang masuk ke ODP target setelah melewati
+// tap ODP-ODP pendahulunya dalam satu line (urut sequence): tiap pendahulu
+// mengurangi rugi kabel segmennya lalu meneruskan sisa (pass-through) sesuai
+// rasio tap-nya. Matematika sama dengan computePowerLevel mode estafet.
+func lineInputPower(startDBm float64, lineChain []model.ODP, targetID string, targetSeq int) float64 {
+	const fiberLossPerKm = 0.35
+	remaining := startDBm
+	for _, prev := range lineChain {
+		if prev.ID == targetID || prev.Sequence >= targetSeq {
+			continue
+		}
+		remaining -= (prev.CableLengthM / 1000.0) * fiberLossPerKm
+		ratio := prev.RatioPercent
+		if ratio <= 0 || ratio > 100 {
+			ratio = 100
+		}
+		if ratio < 100 {
+			remaining += 10 * math.Log10((100-ratio)/100.0)
+		} else {
+			remaining -= 30 // seluruh power diambil, praktis habis
+		}
+	}
+	return math.Round(remaining*100) / 100
 }
 
 // validateODPParent menegakkan aturan topologi ODP ber-induk ODC: ODC harus
@@ -216,19 +274,10 @@ func (s *ODPService) validateODPParent(ctx context.Context, odp *model.ODP) erro
 
 	capacity := parseSplitRatio(splitter.SplitterType)
 
-	odpChildren, err := s.odpRepo.CountODPsBySplitter(ctx, odp.TenantID, splitter.ID, odp.ID)
-	if err != nil {
-		return err
-	}
-	subSplitters, err := s.odpRepo.CountChildSplitters(ctx, odp.TenantID, splitter.ID, "")
-	if err != nil {
-		return err
-	}
-	if capacity > 0 && odpChildren+subSplitters+1 > capacity {
-		return fmt.Errorf("%w: ODC %s (%s) sudah penuh — %d dari %d cabang terpakai",
-			ErrTopology, splitter.Name, splitter.SplitterType, odpChildren+subSplitters, capacity)
-	}
-
+	// Satu line boleh berisi rantai beberapa ODP (estafet). Yang memakan
+	// keluaran ODC adalah LINE-nya, bukan tiap ODP — jadi ODP baru di line
+	// yang sudah berpenghuni tidak menambah pemakaian keluaran.
+	newOutput := 1
 	if odp.SplitterLine != nil {
 		line := *odp.SplitterLine
 		if line < 1 {
@@ -238,14 +287,37 @@ func (s *ODPService) validateODPParent(ctx context.Context, odp *model.ODP) erro
 			return fmt.Errorf("%w: line %d melebihi kapasitas ODC %s (%s)",
 				ErrTopology, line, splitter.Name, splitter.SplitterType)
 		}
-		taken, err := s.odpRepo.FindODPBySplitterLine(ctx, odp.TenantID, splitter.ID, line, odp.ID)
+		if odp.Sequence < 1 {
+			odp.Sequence = 1
+		}
+		taken, err := s.odpRepo.FindODPBySplitterLineSeq(ctx, odp.TenantID, splitter.ID, line, odp.Sequence, odp.ID)
 		if err != nil {
 			return err
 		}
 		if taken != nil {
-			return fmt.Errorf("%w: line %d ODC %s sudah dipakai ODP %s",
-				ErrTopology, line, splitter.Name, taken.Name)
+			return fmt.Errorf("%w: urutan %d pada line %d ODC %s sudah dipakai ODP %s — pakai nomor urutan berikutnya",
+				ErrTopology, odp.Sequence, line, splitter.Name, taken.Name)
 		}
+		occupied, err := s.odpRepo.LineOccupied(ctx, odp.TenantID, splitter.ID, line, odp.ID)
+		if err != nil {
+			return err
+		}
+		if occupied {
+			newOutput = 0 // menyambung rantai line yang sudah ada
+		}
+	}
+
+	outputsUsed, err := s.odpRepo.CountSplitterOutputsUsed(ctx, odp.TenantID, splitter.ID, odp.ID)
+	if err != nil {
+		return err
+	}
+	subSplitters, err := s.odpRepo.CountChildSplitters(ctx, odp.TenantID, splitter.ID, "")
+	if err != nil {
+		return err
+	}
+	if capacity > 0 && outputsUsed+subSplitters+newOutput > capacity {
+		return fmt.Errorf("%w: ODC %s (%s) sudah penuh — %d dari %d keluaran terpakai",
+			ErrTopology, splitter.Name, splitter.SplitterType, outputsUsed+subSplitters, capacity)
 	}
 	return nil
 }
@@ -290,7 +362,7 @@ func (s *ODPService) validateSplitterParent(ctx context.Context, tenantID string
 
 	capacity := parseSplitRatio(parent.SplitterType)
 	if capacity > 0 {
-		odpChildren, err := s.odpRepo.CountODPsBySplitter(ctx, tenantID, parent.ID, "")
+		outputsUsed, err := s.odpRepo.CountSplitterOutputsUsed(ctx, tenantID, parent.ID, "")
 		if err != nil {
 			return err
 		}
@@ -298,9 +370,9 @@ func (s *ODPService) validateSplitterParent(ctx context.Context, tenantID string
 		if err != nil {
 			return err
 		}
-		if odpChildren+subSplitters+1 > capacity {
-			return fmt.Errorf("%w: ODC induk %s (%s) sudah penuh — %d dari %d cabang terpakai",
-				ErrTopology, parent.Name, parent.SplitterType, odpChildren+subSplitters, capacity)
+		if outputsUsed+subSplitters+1 > capacity {
+			return fmt.Errorf("%w: ODC induk %s (%s) sudah penuh — %d dari %d keluaran terpakai",
+				ErrTopology, parent.Name, parent.SplitterType, outputsUsed+subSplitters, capacity)
 		}
 	}
 	return nil
@@ -400,7 +472,9 @@ func populateSignalMetrics(odp *model.ODP) {
 // Cable attenuation: 0.35 dB/km. Splitter loss: -10*log10(ratio_percent/100).
 func (s *ODPService) computePowerLevel(ctx context.Context, odp *model.ODP) {
 	if odp.PONPortID == nil || *odp.PONPortID == "" {
-		odp.PowerLevelDBm = nil
+		// Mode via-ODC: power dihitung dari root PON port rantai ODC dikurangi
+		// loss tiap splitter, lalu berantai per line seperti mode estafet.
+		s.computePowerLevelViaODC(ctx, odp)
 		return
 	}
 
@@ -469,6 +543,50 @@ func (s *ODPService) computePowerLevel(ctx context.Context, odp *model.ODP) {
 			remainingPowerDBm = afterCable - 30 // effectively nothing
 		}
 	}
+}
+
+// computePowerLevelViaODC menghitung power_level_dbm untuk ODP ber-induk ODC:
+// SFP root PON port − loss tiap splitter di rantai ODC − rugi/tap ODP
+// pendahulu se-line − rugi kabel + tap ODP ini sendiri.
+func (s *ODPService) computePowerLevelViaODC(ctx context.Context, odp *model.ODP) {
+	odp.PowerLevelDBm = nil
+	if odp.SplitterID == nil || *odp.SplitterID == "" {
+		return
+	}
+	chain, err := s.odpRepo.GetSplitterChain(ctx, odp.TenantID, *odp.SplitterID)
+	if err != nil || len(chain) == 0 {
+		return
+	}
+	root := chain[len(chain)-1]
+	if root.PONPortID == nil || *root.PONPortID == "" {
+		return
+	}
+	startPower, err := s.odpRepo.GetPONPortSFPRxPower(ctx, *root.PONPortID)
+	if err != nil || startPower == nil {
+		return
+	}
+
+	remaining := *startPower
+	for _, sp := range chain {
+		remaining -= splitterLoss(sp.SplitterType)
+	}
+
+	if odp.SplitterLine != nil {
+		lineChain, err := s.odpRepo.ListBySplitterLine(ctx, odp.TenantID, *odp.SplitterID, *odp.SplitterLine)
+		if err == nil {
+			remaining = lineInputPower(remaining, lineChain, odp.ID, odp.Sequence)
+		}
+	}
+
+	const fiberLossPerKm = 0.35
+	remaining -= (odp.CableLengthM / 1000.0) * fiberLossPerKm
+	ratio := odp.RatioPercent
+	if ratio <= 0 || ratio > 100 {
+		ratio = 100
+	}
+	power := remaining + 10*math.Log10(ratio/100.0)
+	pRound := math.Round(power*100) / 100
+	odp.PowerLevelDBm = &pRound
 }
 
 // ODP Port operations
