@@ -31,6 +31,11 @@ type ODPRepository interface {
 	UpdateSplitter(ctx context.Context, s *model.Splitter) error
 	DeleteSplitter(ctx context.Context, tenantID, splitterID string) error
 	ListSplitters(ctx context.Context, tenantID string, filter SplitterFilter) ([]model.Splitter, int, error)
+	CountODPsBySplitter(ctx context.Context, tenantID, splitterID, excludeODPID string) (int, error)
+	CountChildSplitters(ctx context.Context, tenantID, parentID, excludeSplitterID string) (int, error)
+	FindODPBySplitterLine(ctx context.Context, tenantID, splitterID string, line int, excludeODPID string) (*model.ODP, error)
+	GetSplitterChain(ctx context.Context, tenantID, splitterID string) ([]model.Splitter, error)
+	GetPONPortRoot(ctx context.Context, ponPortID string) (*model.PONPort, *model.OLT, error)
 }
 
 type ODPFilter struct {
@@ -66,16 +71,16 @@ func (r *odpRepository) Create(ctx context.Context, odp *model.ODP) error {
 		INSERT INTO odps (
 			id, tenant_id, olt_id, splitter_id, pon_port_id, splitter_ratio, name, address,
 			latitude, longitude, total_ports, sequence, cable_length_m,
-			ratio_percent, splitter_type, power_level_dbm, status, notes,
+			ratio_percent, splitter_type, splitter_line, power_level_dbm, status, notes,
 			created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		odp.ID, odp.TenantID, odp.OLTID, odp.SplitterID, odp.PONPortID, odp.SplitterRatio,
 		odp.Name, odp.Address,
 		odp.Latitude, odp.Longitude, odp.TotalPorts,
-		odp.Sequence, odp.CableLengthM, odp.RatioPercent, odp.SplitterType,
+		odp.Sequence, odp.CableLengthM, odp.RatioPercent, odp.SplitterType, odp.SplitterLine,
 		odp.PowerLevelDBm, odp.Status, odp.Notes,
 		odp.CreatedAt, odp.UpdatedAt,
 	)
@@ -88,12 +93,13 @@ func (r *odpRepository) FindByID(ctx context.Context, tenantID, odpID string) (*
 		       o.name, o.address,
 		       o.latitude, o.longitude, o.total_ports,
 		       o.sequence, COALESCE(o.cable_length_m,0), COALESCE(o.ratio_percent,0),
-		       o.splitter_type, o.power_level_dbm,
+		       o.splitter_type, o.splitter_line, o.power_level_dbm,
 		       COALESCE(o.status,'draft'), o.notes, o.created_at, o.updated_at,
-		       olt.name, pp.sfp_rx_power, pp.sfp_tx_power, pp.port_number
+		       olt.name, pp.sfp_rx_power, pp.sfp_tx_power, pp.port_number, s.name
 		FROM odps o
 		LEFT JOIN olts olt ON olt.id = o.olt_id
 		LEFT JOIN pon_ports pp ON pp.id = o.pon_port_id
+		LEFT JOIN splitters s ON s.id = o.splitter_id
 		WHERE o.id = $1 AND o.tenant_id = $2
 		LIMIT 1
 	`
@@ -105,9 +111,9 @@ func (r *odpRepository) FindByID(ctx context.Context, tenantID, odpID string) (*
 		&odp.Name, &odp.Address,
 		&odp.Latitude, &odp.Longitude, &odp.TotalPorts,
 		&odp.Sequence, &odp.CableLengthM, &odp.RatioPercent,
-		&odp.SplitterType, &odp.PowerLevelDBm,
+		&odp.SplitterType, &odp.SplitterLine, &odp.PowerLevelDBm,
 		&odp.Status, &odp.Notes, &odp.CreatedAt, &odp.UpdatedAt,
-		&oltName, &odp.PONPortSFPRxPower, &odp.PONPortSFPTxPower, &odp.PONPortNumber,
+		&oltName, &odp.PONPortSFPRxPower, &odp.PONPortSFPTxPower, &odp.PONPortNumber, &odp.SplitterName,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -137,16 +143,16 @@ func (r *odpRepository) Update(ctx context.Context, odp *model.ODP) error {
 			olt_id = $1, splitter_id = $2, pon_port_id = $3, splitter_ratio = $4, name = $5, address = $6,
 			latitude = $7, longitude = $8, total_ports = $9,
 			sequence = $10, cable_length_m = $11, ratio_percent = $12,
-			splitter_type = $13, power_level_dbm = $14, status = $15, notes = $16,
-			updated_at = $17
-		WHERE id = $18 AND tenant_id = $19
+			splitter_type = $13, splitter_line = $14, power_level_dbm = $15, status = $16, notes = $17,
+			updated_at = $18
+		WHERE id = $19 AND tenant_id = $20
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		odp.OLTID, odp.SplitterID, odp.PONPortID, odp.SplitterRatio, odp.Name, odp.Address,
 		odp.Latitude, odp.Longitude, odp.TotalPorts,
 		odp.Sequence, odp.CableLengthM, odp.RatioPercent,
-		odp.SplitterType, odp.PowerLevelDBm, odp.Status, odp.Notes,
+		odp.SplitterType, odp.SplitterLine, odp.PowerLevelDBm, odp.Status, odp.Notes,
 		odp.UpdatedAt, odp.ID, odp.TenantID,
 	)
 	return err
@@ -199,12 +205,13 @@ func (r *odpRepository) List(ctx context.Context, tenantID string, filter ODPFil
 		       o.name, o.address,
 		       o.latitude, o.longitude, o.total_ports,
 		       o.sequence, COALESCE(o.cable_length_m,0), COALESCE(o.ratio_percent,0),
-		       o.splitter_type, o.power_level_dbm,
+		       o.splitter_type, o.splitter_line, o.power_level_dbm,
 		       COALESCE(o.status,'draft'), o.notes, o.created_at, o.updated_at,
-		       olt.name, pp.sfp_rx_power, pp.sfp_tx_power, pp.port_number
+		       olt.name, pp.sfp_rx_power, pp.sfp_tx_power, pp.port_number, s.name
 		FROM odps o
 		LEFT JOIN olts olt ON olt.id = o.olt_id
 		LEFT JOIN pon_ports pp ON pp.id = o.pon_port_id
+		LEFT JOIN splitters s ON s.id = o.splitter_id
 		%s
 		ORDER BY o.created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -227,9 +234,9 @@ func (r *odpRepository) List(ctx context.Context, tenantID string, filter ODPFil
 			&odp.Name, &odp.Address,
 			&odp.Latitude, &odp.Longitude, &odp.TotalPorts,
 			&odp.Sequence, &odp.CableLengthM, &odp.RatioPercent,
-			&odp.SplitterType, &odp.PowerLevelDBm,
+			&odp.SplitterType, &odp.SplitterLine, &odp.PowerLevelDBm,
 			&odp.Status, &odp.Notes, &odp.CreatedAt, &odp.UpdatedAt,
-			&oltName, &odp.PONPortSFPRxPower, &odp.PONPortSFPTxPower, &odp.PONPortNumber,
+			&oltName, &odp.PONPortSFPRxPower, &odp.PONPortSFPTxPower, &odp.PONPortNumber, &odp.SplitterName,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -421,10 +428,13 @@ func (r *odpRepository) CreateSplitter(ctx context.Context, s *model.Splitter) e
 
 func (r *odpRepository) FindSplitterByID(ctx context.Context, tenantID, splitterID string) (*model.Splitter, error) {
 	query := `
-		SELECT id, tenant_id, pon_port_id, parent_splitter_id, name, splitter_type,
-		       latitude, longitude, notes, created_at, updated_at
-		FROM splitters
-		WHERE id = $1 AND tenant_id = $2
+		SELECT sp.id, sp.tenant_id, sp.pon_port_id, sp.parent_splitter_id, sp.name, sp.splitter_type,
+		       sp.latitude, sp.longitude, sp.notes, sp.created_at, sp.updated_at,
+		       pp.port_number, olt.id, olt.name, pp.sfp_rx_power
+		FROM splitters sp
+		LEFT JOIN pon_ports pp ON pp.id = sp.pon_port_id
+		LEFT JOIN olts olt ON olt.id = pp.olt_id
+		WHERE sp.id = $1 AND sp.tenant_id = $2
 		LIMIT 1
 	`
 
@@ -434,6 +444,7 @@ func (r *odpRepository) FindSplitterByID(ctx context.Context, tenantID, splitter
 		&s.Name, &s.SplitterType,
 		&s.Latitude, &s.Longitude, &s.Notes,
 		&s.CreatedAt, &s.UpdatedAt,
+		&s.PONPortNumber, &s.OLTID, &s.OLTName, &s.SFPRxPower,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -473,24 +484,24 @@ func (r *odpRepository) ListSplitters(ctx context.Context, tenantID string, filt
 	var args []interface{}
 	argIdx := 1
 
-	conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argIdx))
+	conditions = append(conditions, fmt.Sprintf("sp.tenant_id = $%d", argIdx))
 	args = append(args, tenantID)
 	argIdx++
 
 	if filter.Search != "" {
-		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("sp.name ILIKE $%d", argIdx))
 		args = append(args, "%"+filter.Search+"%")
 		argIdx++
 	}
 
 	if filter.PONPortID != "" {
-		conditions = append(conditions, fmt.Sprintf("pon_port_id = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("sp.pon_port_id = $%d", argIdx))
 		args = append(args, filter.PONPortID)
 		argIdx++
 	}
 
 	if filter.ParentID != "" {
-		conditions = append(conditions, fmt.Sprintf("parent_splitter_id = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("sp.parent_splitter_id = $%d", argIdx))
 		args = append(args, filter.ParentID)
 		argIdx++
 	}
@@ -498,7 +509,7 @@ func (r *odpRepository) ListSplitters(ctx context.Context, tenantID string, filt
 	where := "WHERE " + strings.Join(conditions, " AND ")
 
 	var total int
-	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM splitters "+where, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM splitters sp "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -511,11 +522,14 @@ func (r *odpRepository) ListSplitters(ctx context.Context, tenantID string, filt
 	offset := (filter.Page - 1) * filter.PerPage
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, tenant_id, pon_port_id, parent_splitter_id, name, splitter_type,
-		       latitude, longitude, notes, created_at, updated_at
-		FROM splitters
+		SELECT sp.id, sp.tenant_id, sp.pon_port_id, sp.parent_splitter_id, sp.name, sp.splitter_type,
+		       sp.latitude, sp.longitude, sp.notes, sp.created_at, sp.updated_at,
+		       pp.port_number, olt.id, olt.name, pp.sfp_rx_power
+		FROM splitters sp
+		LEFT JOIN pon_ports pp ON pp.id = sp.pon_port_id
+		LEFT JOIN olts olt ON olt.id = pp.olt_id
 		%s
-		ORDER BY created_at DESC
+		ORDER BY sp.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, where, argIdx, argIdx+1)
 
@@ -535,6 +549,7 @@ func (r *odpRepository) ListSplitters(ctx context.Context, tenantID string, filt
 			&s.Name, &s.SplitterType,
 			&s.Latitude, &s.Longitude, &s.Notes,
 			&s.CreatedAt, &s.UpdatedAt,
+			&s.PONPortNumber, &s.OLTID, &s.OLTName, &s.SFPRxPower,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -542,4 +557,98 @@ func (r *odpRepository) ListSplitters(ctx context.Context, tenantID string, filt
 	}
 
 	return splitters, total, nil
+}
+
+// CountODPsBySplitter menghitung ODP anak sebuah ODC/splitter (excludeODPID
+// dikecualikan — dipakai saat update agar diri sendiri tidak terhitung).
+func (r *odpRepository) CountODPsBySplitter(ctx context.Context, tenantID, splitterID, excludeODPID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM odps WHERE tenant_id = $1 AND splitter_id = $2 AND id <> $3`,
+		tenantID, splitterID, excludeODPID).Scan(&n)
+	return n, err
+}
+
+// CountChildSplitters menghitung sub-splitter di bawah sebuah ODC/splitter.
+func (r *odpRepository) CountChildSplitters(ctx context.Context, tenantID, parentID, excludeSplitterID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM splitters WHERE tenant_id = $1 AND parent_splitter_id = $2 AND id <> $3`,
+		tenantID, parentID, excludeSplitterID).Scan(&n)
+	return n, err
+}
+
+// FindODPBySplitterLine mencari ODP lain yang sudah memakai line keluaran
+// tertentu pada sebuah ODC (untuk validasi satu line = satu ODP).
+func (r *odpRepository) FindODPBySplitterLine(ctx context.Context, tenantID, splitterID string, line int, excludeODPID string) (*model.ODP, error) {
+	var odp model.ODP
+	err := r.db.QueryRow(ctx,
+		`SELECT id, name FROM odps
+		 WHERE tenant_id = $1 AND splitter_id = $2 AND splitter_line = $3 AND id <> $4
+		 LIMIT 1`,
+		tenantID, splitterID, line, excludeODPID).Scan(&odp.ID, &odp.Name)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &odp, nil
+}
+
+// GetSplitterChain mengembalikan rantai ODC dari splitter yang diminta sampai
+// root (indeks 0 = splitter itu sendiri, terakhir = root yang menempel di PON
+// port). Kedalaman dibatasi 32 sebagai pengaman terhadap data siklik lama.
+func (r *odpRepository) GetSplitterChain(ctx context.Context, tenantID, splitterID string) ([]model.Splitter, error) {
+	query := `
+		WITH RECURSIVE chain AS (
+			SELECT sp.*, 1 AS depth FROM splitters sp WHERE sp.id = $1 AND sp.tenant_id = $2
+			UNION ALL
+			SELECT p.*, c.depth + 1 FROM splitters p
+			JOIN chain c ON p.id = c.parent_splitter_id
+			WHERE c.depth < 32
+		)
+		SELECT id, tenant_id, pon_port_id, parent_splitter_id, name, splitter_type,
+		       latitude, longitude, notes, created_at, updated_at
+		FROM chain ORDER BY depth ASC
+	`
+	rows, err := r.db.Query(ctx, query, splitterID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chain []model.Splitter
+	for rows.Next() {
+		var s model.Splitter
+		if err := rows.Scan(
+			&s.ID, &s.TenantID, &s.PONPortID, &s.ParentSplitterID,
+			&s.Name, &s.SplitterType,
+			&s.Latitude, &s.Longitude, &s.Notes,
+			&s.CreatedAt, &s.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		chain = append(chain, s)
+	}
+	return chain, rows.Err()
+}
+
+// GetPONPortRoot mengembalikan PON port + OLT pemiliknya (untuk info root
+// rantai ODC di detail ODP).
+func (r *odpRepository) GetPONPortRoot(ctx context.Context, ponPortID string) (*model.PONPort, *model.OLT, error) {
+	var pp model.PONPort
+	var olt model.OLT
+	err := r.db.QueryRow(ctx,
+		`SELECT pp.id, pp.olt_id, pp.port_number, pp.sfp_rx_power, pp.sfp_tx_power, o.id, o.name
+		 FROM pon_ports pp JOIN olts o ON o.id = pp.olt_id
+		 WHERE pp.id = $1`,
+		ponPortID).Scan(&pp.ID, &pp.OLTID, &pp.PortNumber, &pp.SFPRxPower, &pp.SFPTxPower, &olt.ID, &olt.Name)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	return &pp, &olt, nil
 }

@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"math"
+	"strconv"
+	"strings"
 
 	"github.com/candrasyahputra/radius-server/internal/model"
 	"github.com/candrasyahputra/radius-server/internal/repository"
@@ -14,7 +17,24 @@ var (
 	ErrODPNotFound      = errors.New("ODP tidak ditemukan")
 	ErrODPPortNotFound  = errors.New("Port ODP tidak ditemukan")
 	ErrSplitterNotFound = errors.New("Splitter tidak ditemukan")
+	// ErrTopology menandai pelanggaran aturan topologi (kapasitas ODC penuh,
+	// line ganda, siklus induk, format rasio salah) — dipetakan handler ke 400.
+	ErrTopology = errors.New("topologi tidak valid")
 )
+
+// parseSplitRatio membaca kapasitas keluaran dari tipe splitter "1:N".
+// Mengembalikan 0 bila format tidak dikenali (tanpa batas kapasitas).
+func parseSplitRatio(splitterType string) int {
+	parts := strings.SplitN(strings.TrimSpace(splitterType), ":", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) != "1" {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
+}
 
 type ODPService struct {
 	odpRepo      repository.ODPRepository
@@ -43,6 +63,7 @@ type CreateODPInput struct {
 	CableLengthM  float64
 	RatioPercent  float64
 	SplitterType  *string
+	SplitterLine  *int
 	Status        string
 	Notes         *string
 }
@@ -61,6 +82,7 @@ type UpdateODPInput struct {
 	CableLengthM  float64
 	RatioPercent  float64
 	SplitterType  *string
+	SplitterLine  *int
 	Status        string
 	Notes         *string
 }
@@ -81,6 +103,7 @@ func (s *ODPService) Create(ctx context.Context, input CreateODPInput) (*model.O
 		CableLengthM:  input.CableLengthM,
 		RatioPercent:  input.RatioPercent,
 		SplitterType:  input.SplitterType,
+		SplitterLine:  input.SplitterLine,
 		Status:        input.Status,
 		Notes:         input.Notes,
 	}
@@ -89,6 +112,10 @@ func (s *ODPService) Create(ctx context.Context, input CreateODPInput) (*model.O
 	}
 	if odp.Status == "" {
 		odp.Status = "draft"
+	}
+
+	if err := s.validateODPParent(ctx, odp); err != nil {
+		return nil, err
 	}
 
 	s.computePowerLevel(ctx, odp)
@@ -139,7 +166,144 @@ func (s *ODPService) GetByID(ctx context.Context, tenantID, odpID string) (*mode
 		return nil, ErrODPNotFound
 	}
 	populateSignalMetrics(odp)
+	s.populateSplitterChain(ctx, odp)
 	return odp, nil
+}
+
+// populateSplitterChain melengkapi ODP ber-induk ODC dengan rantai ODC sampai
+// root plus info PON port/OLT di ujungnya — untuk tampilan jalur & link budget.
+func (s *ODPService) populateSplitterChain(ctx context.Context, odp *model.ODP) {
+	if odp.SplitterID == nil || *odp.SplitterID == "" {
+		return
+	}
+	chain, err := s.odpRepo.GetSplitterChain(ctx, odp.TenantID, *odp.SplitterID)
+	if err != nil || len(chain) == 0 {
+		return
+	}
+	odp.SplitterChain = chain
+
+	root := chain[len(chain)-1]
+	if root.PONPortID == nil || *root.PONPortID == "" {
+		return
+	}
+	pp, olt, err := s.odpRepo.GetPONPortRoot(ctx, *root.PONPortID)
+	if err != nil || pp == nil {
+		return
+	}
+	odp.RootPONPortNumber = &pp.PortNumber
+	odp.RootSFPRxPower = pp.SFPRxPower
+	if olt != nil {
+		odp.RootOLTName = &olt.Name
+	}
+}
+
+// validateODPParent menegakkan aturan topologi ODP ber-induk ODC: ODC harus
+// milik tenant, kapasitas rasio tidak terlampaui, dan line keluaran valid &
+// belum dipakai ODP lain. ODP tanpa ODC tidak menyimpan nomor line.
+func (s *ODPService) validateODPParent(ctx context.Context, odp *model.ODP) error {
+	if odp.SplitterID == nil || *odp.SplitterID == "" {
+		odp.SplitterLine = nil
+		return nil
+	}
+
+	splitter, err := s.odpRepo.FindSplitterByID(ctx, odp.TenantID, *odp.SplitterID)
+	if err != nil {
+		return err
+	}
+	if splitter == nil {
+		return ErrSplitterNotFound
+	}
+
+	capacity := parseSplitRatio(splitter.SplitterType)
+
+	odpChildren, err := s.odpRepo.CountODPsBySplitter(ctx, odp.TenantID, splitter.ID, odp.ID)
+	if err != nil {
+		return err
+	}
+	subSplitters, err := s.odpRepo.CountChildSplitters(ctx, odp.TenantID, splitter.ID, "")
+	if err != nil {
+		return err
+	}
+	if capacity > 0 && odpChildren+subSplitters+1 > capacity {
+		return fmt.Errorf("%w: ODC %s (%s) sudah penuh — %d dari %d cabang terpakai",
+			ErrTopology, splitter.Name, splitter.SplitterType, odpChildren+subSplitters, capacity)
+	}
+
+	if odp.SplitterLine != nil {
+		line := *odp.SplitterLine
+		if line < 1 {
+			return fmt.Errorf("%w: nomor line ODC minimal 1", ErrTopology)
+		}
+		if capacity > 0 && line > capacity {
+			return fmt.Errorf("%w: line %d melebihi kapasitas ODC %s (%s)",
+				ErrTopology, line, splitter.Name, splitter.SplitterType)
+		}
+		taken, err := s.odpRepo.FindODPBySplitterLine(ctx, odp.TenantID, splitter.ID, line, odp.ID)
+		if err != nil {
+			return err
+		}
+		if taken != nil {
+			return fmt.Errorf("%w: line %d ODC %s sudah dipakai ODP %s",
+				ErrTopology, line, splitter.Name, taken.Name)
+		}
+	}
+	return nil
+}
+
+// validateSplitterParent menegakkan aturan topologi ODC: format tipe 1:N,
+// induk milik tenant, tidak membentuk siklus, dan kapasitas induk cukup.
+// selfID kosong saat create (belum punya ID).
+func (s *ODPService) validateSplitterParent(ctx context.Context, tenantID string, splitterType string, parentID *string, selfID string) error {
+	if parseSplitRatio(splitterType) == 0 {
+		return fmt.Errorf("%w: tipe splitter harus berformat 1:N (contoh 1:4)", ErrTopology)
+	}
+	if parentID == nil || *parentID == "" {
+		return nil
+	}
+	if selfID != "" && *parentID == selfID {
+		return fmt.Errorf("%w: ODC tidak boleh menginduk ke dirinya sendiri", ErrTopology)
+	}
+
+	parent, err := s.odpRepo.FindSplitterByID(ctx, tenantID, *parentID)
+	if err != nil {
+		return err
+	}
+	if parent == nil {
+		return fmt.Errorf("%w: ODC induk tidak ditemukan", ErrTopology)
+	}
+
+	// Deteksi siklus: telusuri rantai induk; bila kembali ke diri sendiri, tolak.
+	cur := parent
+	for depth := 0; depth < 32 && cur != nil; depth++ {
+		if selfID != "" && cur.ID == selfID {
+			return fmt.Errorf("%w: induk yang dipilih membentuk siklus", ErrTopology)
+		}
+		if cur.ParentSplitterID == nil || *cur.ParentSplitterID == "" {
+			break
+		}
+		next, err := s.odpRepo.FindSplitterByID(ctx, tenantID, *cur.ParentSplitterID)
+		if err != nil {
+			return err
+		}
+		cur = next
+	}
+
+	capacity := parseSplitRatio(parent.SplitterType)
+	if capacity > 0 {
+		odpChildren, err := s.odpRepo.CountODPsBySplitter(ctx, tenantID, parent.ID, "")
+		if err != nil {
+			return err
+		}
+		subSplitters, err := s.odpRepo.CountChildSplitters(ctx, tenantID, parent.ID, selfID)
+		if err != nil {
+			return err
+		}
+		if odpChildren+subSplitters+1 > capacity {
+			return fmt.Errorf("%w: ODC induk %s (%s) sudah penuh — %d dari %d cabang terpakai",
+				ErrTopology, parent.Name, parent.SplitterType, odpChildren+subSplitters, capacity)
+		}
+	}
+	return nil
 }
 
 func (s *ODPService) Update(ctx context.Context, tenantID, odpID string, input UpdateODPInput) (*model.ODP, error) {
@@ -164,10 +328,15 @@ func (s *ODPService) Update(ctx context.Context, tenantID, odpID string, input U
 	odp.CableLengthM = input.CableLengthM
 	odp.RatioPercent = input.RatioPercent
 	odp.SplitterType = input.SplitterType
+	odp.SplitterLine = input.SplitterLine
 	odp.Status = input.Status
 	odp.Notes = input.Notes
 	if odp.Status == "" {
 		odp.Status = "draft"
+	}
+
+	if err := s.validateODPParent(ctx, odp); err != nil {
+		return nil, err
 	}
 
 	s.computePowerLevel(ctx, odp)
@@ -472,6 +641,10 @@ type UpdateSplitterInput struct {
 }
 
 func (s *ODPService) CreateSplitter(ctx context.Context, input CreateSplitterInput) (*model.Splitter, error) {
+	if err := s.validateSplitterParent(ctx, input.TenantID, input.SplitterType, input.ParentSplitterID, ""); err != nil {
+		return nil, err
+	}
+
 	splitter := &model.Splitter{
 		TenantID:         input.TenantID,
 		PONPortID:        input.PONPortID,
@@ -507,6 +680,10 @@ func (s *ODPService) UpdateSplitter(ctx context.Context, tenantID, splitterID st
 	}
 	if splitter == nil {
 		return nil, ErrSplitterNotFound
+	}
+
+	if err := s.validateSplitterParent(ctx, tenantID, input.SplitterType, input.ParentSplitterID, splitterID); err != nil {
+		return nil, err
 	}
 
 	splitter.PONPortID = input.PONPortID

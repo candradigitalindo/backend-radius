@@ -18,6 +18,7 @@ type ODP struct {
 	CableLengthM  float64   `json:"cable_length_m"`
 	RatioPercent  float64   `json:"ratio_percent"`
 	SplitterType  *string   `json:"splitter_type,omitempty"`
+	SplitterLine  *int      `json:"splitter_line,omitempty"`
 	PowerLevelDBm *float64  `json:"power_level_dbm,omitempty"`
 	Status        string    `json:"status"`
 	Notes         *string   `json:"notes,omitempty"`
@@ -29,6 +30,14 @@ type ODP struct {
 	PONPortSFPTxPower   *float64 `json:"pon_port_sfp_tx_power"`
 	PONPortNumber       *int     `json:"pon_port_number,omitempty"`
 	SignalAttenuationDB *float64 `json:"signal_attenuation_db,omitempty"`
+	SplitterName        *string  `json:"splitter_name,omitempty"`
+
+	// Rantai ODC dari induk langsung sampai root (detail saja), plus info
+	// PON port/OLT di ujung rantai — untuk tampilan jalur & link budget via ODC.
+	SplitterChain     []Splitter `json:"splitter_chain,omitempty"`
+	RootOLTName       *string    `json:"root_olt_name,omitempty"`
+	RootPONPortNumber *int       `json:"root_pon_port_number,omitempty"`
+	RootSFPRxPower    *float64   `json:"root_sfp_rx_power,omitempty"`
 
 	Ports []ODPPort `json:"ports,omitempty"`
 	OLT   *OLT      `json:"olt,omitempty"`
@@ -61,4 +70,11 @@ type Splitter struct {
 
 	PONPort        *PONPort  `json:"pon_port,omitempty"`
 	ParentSplitter *Splitter `json:"parent_splitter,omitempty"`
+
+	// Computed / joined (daftar & detail): info OLT pemilik pon_port_id,
+	// agar UI tidak perlu brute-force mencari OLT per PON port.
+	PONPortNumber *int     `json:"pon_port_number,omitempty"`
+	OLTID         *string  `json:"olt_id,omitempty"`
+	OLTName       *string  `json:"olt_name,omitempty"`
+	SFPRxPower    *float64 `json:"sfp_rx_power,omitempty"`
 }

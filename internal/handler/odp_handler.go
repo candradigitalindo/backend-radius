@@ -34,6 +34,7 @@ type createODPRequest struct {
 	CableLengthM  float64 `json:"cable_length_m"`
 	RatioPercent  float64 `json:"ratio_percent"`
 	SplitterType  *string `json:"splitter_type"`
+	SplitterLine  *int    `json:"splitter_line"`
 	Status        string  `json:"status"`
 	Notes         *string `json:"notes"`
 }
@@ -52,6 +53,7 @@ type updateODPRequest struct {
 	CableLengthM  float64 `json:"cable_length_m"`
 	RatioPercent  float64 `json:"ratio_percent"`
 	SplitterType  *string `json:"splitter_type"`
+	SplitterLine  *int    `json:"splitter_line"`
 	Status        string  `json:"status"`
 	Notes         *string `json:"notes"`
 }
@@ -83,10 +85,17 @@ func (h *ODPHandler) Create(c *fiber.Ctx) error {
 		CableLengthM:  req.CableLengthM,
 		RatioPercent:  req.RatioPercent,
 		SplitterType:  req.SplitterType,
+		SplitterLine:  req.SplitterLine,
 		Status:        req.Status,
 		Notes:         req.Notes,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrTopology) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrSplitterNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat ODP"})
 	}
 
@@ -135,12 +144,16 @@ func (h *ODPHandler) Update(c *fiber.Ctx) error {
 		CableLengthM:  req.CableLengthM,
 		RatioPercent:  req.RatioPercent,
 		SplitterType:  req.SplitterType,
+		SplitterLine:  req.SplitterLine,
 		Status:        req.Status,
 		Notes:         req.Notes,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrODPNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrTopology) || errors.Is(err, service.ErrSplitterNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
@@ -329,6 +342,9 @@ func (h *ODPHandler) CreateSplitter(c *fiber.Ctx) error {
 		Notes:            req.Notes,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrTopology) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat splitter"})
 	}
 
@@ -375,6 +391,9 @@ func (h *ODPHandler) UpdateSplitter(c *fiber.Ctx) error {
 	if err != nil {
 		if errors.Is(err, service.ErrSplitterNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrTopology) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
