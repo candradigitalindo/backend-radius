@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -1388,11 +1389,28 @@ func (s *GenieACSService) AutoMatchONTs(ctx context.Context, _ string) (*AutoMat
 			continue
 		}
 
-		// Pastikan pelanggan belum punya ONT lain
+		// Pelanggan yang sudah punya ONT lain = skenario GANTI PERANGKAT.
+		// Rebind otomatis HANYA bila ONT baru masih hidup di ACS dan ONT lama
+		// sudah tidak inform (atau hilang dari ACS) — mencegah dua ONT hidup
+		// saling berebut pelanggan yang sama.
 		existing, _ := s.ontRepo.FindByCustomerID(ctx, customer.TenantID, customer.ID)
 		if existing != nil {
-			result.Unmatched++
-			continue
+			const staleAfter = 30 * time.Minute
+			newAlive := false
+			if t, err := time.Parse(time.RFC3339Nano, device.LastInform); err == nil {
+				newAlive = time.Since(t) < staleAfter
+			}
+			if !newAlive || !s.ontOfflineInACS(ctx, existing.SerialNumber, staleAfter) {
+				result.Unmatched++
+				continue
+			}
+			if err := s.ontRepo.UnlinkFromCustomer(ctx, existing.ID); err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: unlink old ONT %s failed: %v", ont.SerialNumber, existing.SerialNumber, err))
+				result.Unmatched++
+				continue
+			}
+			log.Printf("[GenieACS] auto-replace: ONT %s menggantikan %s (offline) untuk pelanggan %s",
+				ont.SerialNumber, existing.SerialNumber, customer.Name)
 		}
 
 		// Link ONT ke pelanggan; tenant_id disesuaikan dengan tenant pelanggan
@@ -1405,4 +1423,23 @@ func (s *GenieACSService) AutoMatchONTs(ctx context.Context, _ string) (*AutoMat
 	}
 
 	return result, nil
+}
+
+// ontOfflineInACS melaporkan apakah sebuah ONT sudah berhenti inform ke
+// GenieACS selama >= threshold (atau tidak ada sama sekali di ACS). Membaca
+// langsung dari ACS — bukan kolom last_online_at di DB yang bisa basi.
+func (s *GenieACSService) ontOfflineInACS(ctx context.Context, serial string, threshold time.Duration) bool {
+	dev, err := s.client.FindDeviceBySerialNumber(ctx, serial)
+	if err != nil {
+		// ACS tidak bisa dihubungi — jangan ambil keputusan rebind.
+		return false
+	}
+	if dev == nil {
+		return true // sudah tidak terdaftar di ACS
+	}
+	t, err := time.Parse(time.RFC3339Nano, dev.LastInform)
+	if err != nil {
+		return true // tak pernah tercatat inform
+	}
+	return time.Since(t) >= threshold
 }

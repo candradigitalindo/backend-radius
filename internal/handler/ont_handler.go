@@ -129,6 +129,23 @@ func (h *ONTHandler) Delete(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "ONT berhasil dihapus"})
 }
 
+// Unlink melepas ONT dari pelanggannya (skenario ganti perangkat) — ONT
+// kembali berstatus "discovered" dan bisa dipakai ulang atau dihapus.
+func (h *ONTHandler) Unlink(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+	ontID := c.Params("id")
+
+	ont, err := h.ontService.UnlinkCustomer(c.Context(), tenantID, ontID)
+	if err != nil {
+		if errors.Is(err, service.ErrONTNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Kesalahan server internal"})
+	}
+
+	return c.JSON(ont)
+}
+
 func (h *ONTHandler) List(c *fiber.Ctx) error {
 	tenantID, _ := c.Locals("tenant_id").(string)
 

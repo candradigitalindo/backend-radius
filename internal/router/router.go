@@ -481,6 +481,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	onts.Get("/:id", ontHandler.GetByID)
 	onts.Put("/:id", middleware.PermissionGuard("onts.edit"), ontHandler.Update)
 	onts.Delete("/:id", middleware.PermissionGuard("onts.delete"), ontHandler.Delete)
+	onts.Post("/:id/unlink", middleware.PermissionGuard("onts.edit"), ontHandler.Unlink)
 	onts.Post("/:id/sync", middleware.PermissionGuard("genieacs.manage"), genieacsHandler.SyncONT)
 	onts.Post("/:id/reboot", middleware.PermissionGuard("genieacs.manage"), genieacsHandler.RebootDevice)
 	onts.Post("/:id/wifi", middleware.PermissionGuard("genieacs.manage"), genieacsHandler.SetWiFi)

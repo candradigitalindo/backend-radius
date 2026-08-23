@@ -161,6 +161,22 @@ func (s *ONTService) Delete(ctx context.Context, tenantID, ontID string) error {
 	return s.ontRepo.Delete(ctx, tenantID, ontID)
 }
 
+// UnlinkCustomer melepas ONT dari pelanggannya (skenario ganti perangkat):
+// status kembali "discovered" agar auto-match bisa memakai ONT pengganti.
+func (s *ONTService) UnlinkCustomer(ctx context.Context, tenantID, ontID string) (*model.ONT, error) {
+	ont, err := s.ontRepo.FindByID(ctx, tenantID, ontID)
+	if err != nil {
+		return nil, err
+	}
+	if ont == nil {
+		return nil, ErrONTNotFound
+	}
+	if err := s.ontRepo.UnlinkFromCustomer(ctx, ont.ID); err != nil {
+		return nil, err
+	}
+	return s.ontRepo.FindByID(ctx, tenantID, ontID)
+}
+
 func (s *ONTService) List(ctx context.Context, tenantID string, filter repository.ONTFilter) ([]model.ONT, int, error) {
 	return s.ontRepo.List(ctx, tenantID, filter)
 }

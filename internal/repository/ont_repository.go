@@ -37,6 +37,9 @@ type ONTRepository interface {
 	// LinkToCustomer assigns an ONT to a customer and updates its tenant to match the customer.
 	// Does NOT filter by tenant_id in WHERE — safe to call even when tenant may differ.
 	LinkToCustomer(ctx context.Context, ontID, customerID, tenantID string) error
+	// UnlinkFromCustomer detaches an ONT from its customer (device-replacement flow):
+	// back to "discovered", port cleared, so it can be re-matched or cleaned up.
+	UnlinkFromCustomer(ctx context.Context, ontID string) error
 }
 
 type ONTFilter struct {
@@ -531,5 +534,18 @@ func (r *ontRepository) LinkToCustomer(ctx context.Context, ontID, customerID, t
 		WHERE id = $3
 	`
 	_, err := r.db.Exec(ctx, query, customerID, tenantID, ontID)
+	return err
+}
+
+// UnlinkFromCustomer melepas ONT dari pelanggannya (skenario ganti perangkat).
+// Status kembali "discovered" dan provisioned_at dikosongkan supaya bila ONT
+// ini dipakai lagi, provisioning berjalan ulang untuk pelanggan barunya.
+func (r *ontRepository) UnlinkFromCustomer(ctx context.Context, ontID string) error {
+	query := `
+		UPDATE onts
+		SET customer_id = NULL, odp_port_id = NULL, status = 'discovered', provisioned_at = NULL, updated_at = NOW()
+		WHERE id = $1
+	`
+	_, err := r.db.Exec(ctx, query, ontID)
 	return err
 }
