@@ -887,6 +887,10 @@ func (s *CustomerService) List(ctx context.Context, tenantID string, filter repo
 	return s.customerRepo.List(ctx, tenantID, filter)
 }
 
+func (s *CustomerService) Stats(ctx context.Context, tenantID string) (*repository.CustomerStats, error) {
+	return s.customerRepo.CountStats(ctx, tenantID)
+}
+
 func billingDateFromDeadline(deadline int) int {
 	return billing.InvoiceDayFromDueDay(deadline)
 }

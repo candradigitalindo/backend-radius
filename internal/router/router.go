@@ -461,6 +461,7 @@ func Setup(app *fiber.App, deps *Dependencies) {
 	// Customer routes
 	customers := protected.Group("/customers", middleware.PermissionGuard("customers.view"))
 	customers.Get("/next-code", customerHandler.NextCode)
+	customers.Get("/stats", customerHandler.Stats)
 	customers.Get("/", customerHandler.List)
 	customers.Post("/", middleware.PermissionGuard("customers.create"), customerHandler.Create)
 	customers.Get("/:id", customerHandler.GetByID)

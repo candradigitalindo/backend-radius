@@ -28,6 +28,7 @@ type CustomerRepository interface {
 	Update(ctx context.Context, customer *model.Customer) error
 	Delete(ctx context.Context, tenantID, customerID string) error
 	List(ctx context.Context, tenantID string, filter CustomerFilter) ([]model.Customer, int, error)
+	CountStats(ctx context.Context, tenantID string) (*CustomerStats, error)
 	SetIsolated(ctx context.Context, tenantID, customerID string, isolatedAt *time.Time) error
 	CountByCodePrefix(ctx context.Context, tenantID, prefix string) (int, error)
 	CountByPPPoEPrefix(ctx context.Context, tenantID, prefix string) (int, error)
@@ -45,8 +46,20 @@ type CustomerFilter struct {
 	Search   string
 	Status   string
 	RouterID string
-	Page     int
-	PerPage  int
+	// Connection menyaring berdasarkan status koneksi live:
+	// "online" = punya sesi RADIUS aktif; "offline" = tidak punya (dan tidak isolir).
+	Connection string
+	Page       int
+	PerPage    int
+}
+
+// CustomerStats: ringkasan hitungan untuk strip status di daftar pelanggan.
+type CustomerStats struct {
+	Total    int `json:"total"`
+	Active   int `json:"active"`
+	Isolated int `json:"isolated"`
+	Online   int `json:"online"`
+	Offline  int `json:"offline"`
 }
 
 type customerRepository struct {
@@ -272,6 +285,28 @@ func (r *customerRepository) Delete(ctx context.Context, tenantID, customerID st
 	return err
 }
 
+// CountStats menghitung ringkasan status pelanggan dalam satu query:
+// total, aktif, isolir, online (sesi RADIUS aktif), offline (aktif tanpa sesi).
+func (r *customerRepository) CountStats(ctx context.Context, tenantID string) (*CustomerStats, error) {
+	query := `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE c.status = 'active'),
+		       COUNT(*) FILTER (WHERE c.status = 'isolated'),
+		       COUNT(*) FILTER (WHERE EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active'))
+		FROM customers c
+		WHERE c.tenant_id = $1
+	`
+	var s CustomerStats
+	if err := r.db.QueryRow(ctx, query, tenantID).Scan(&s.Total, &s.Active, &s.Isolated, &s.Online); err != nil {
+		return nil, err
+	}
+	s.Offline = s.Total - s.Isolated - s.Online
+	if s.Offline < 0 {
+		s.Offline = 0
+	}
+	return &s, nil
+}
+
 func (r *customerRepository) List(ctx context.Context, tenantID string, filter CustomerFilter) ([]model.Customer, int, error) {
 	var conditions []string
 	var args []interface{}
@@ -297,6 +332,14 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 		conditions = append(conditions, fmt.Sprintf("c.router_id = $%d", argIdx))
 		args = append(args, filter.RouterID)
 		argIdx++
+	}
+	// Filter koneksi live — definisinya SAMA dengan ConnectionStatus di hasil list:
+	// online = ada sesi aktif; offline = tanpa sesi aktif dan bukan isolir.
+	switch filter.Connection {
+	case "online":
+		conditions = append(conditions, "EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active')")
+	case "offline":
+		conditions = append(conditions, "NOT EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active') AND c.status <> 'isolated'")
 	}
 
 	where := "WHERE " + strings.Join(conditions, " AND ")

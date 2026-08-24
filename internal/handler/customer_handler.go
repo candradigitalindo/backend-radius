@@ -363,11 +363,12 @@ func (h *CustomerHandler) List(c *fiber.Ctx) error {
 	perPage, _ := strconv.Atoi(c.Query("per_page", "20"))
 
 	filter := repository.CustomerFilter{
-		Search:   c.Query("search"),
-		Status:   c.Query("status"),
-		RouterID: c.Query("router_id"),
-		Page:     page,
-		PerPage:  perPage,
+		Search:     c.Query("search"),
+		Status:     c.Query("status"),
+		RouterID:   c.Query("router_id"),
+		Connection: c.Query("connection"),
+		Page:       page,
+		PerPage:    perPage,
 	}
 
 	customers, total, err := h.customerService.List(c.Context(), tenantID, filter)
@@ -381,6 +382,18 @@ func (h *CustomerHandler) List(c *fiber.Ctx) error {
 		"page":     page,
 		"per_page": perPage,
 	})
+}
+
+// Stats mengembalikan ringkasan hitungan pelanggan (total/aktif/isolir/online/
+// offline) untuk strip status di halaman daftar — satu query, bukan fetch semua.
+func (h *CustomerHandler) Stats(c *fiber.Ctx) error {
+	tenantID, _ := c.Locals("tenant_id").(string)
+
+	stats, err := h.customerService.Stats(c.Context(), tenantID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat statistik pelanggan"})
+	}
+	return c.JSON(stats)
 }
 
 func (h *CustomerHandler) Isolate(c *fiber.Ctx) error {
