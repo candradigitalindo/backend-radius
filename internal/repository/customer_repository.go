@@ -288,11 +288,16 @@ func (r *customerRepository) Delete(ctx context.Context, tenantID, customerID st
 // CountStats menghitung ringkasan status pelanggan dalam satu query:
 // total, aktif, isolir, online (sesi RADIUS aktif), offline (aktif tanpa sesi).
 func (r *customerRepository) CountStats(ctx context.Context, tenantID string) (*CustomerStats, error) {
+	// "Online" HARUS mengecualikan pelanggan isolir: sesi PPPoE pelanggan isolir
+	// tetap hidup (hanya dibatasi address-list), tapi di kolom Koneksi mereka
+	// ditampilkan "Isolir" — kalau ikut dihitung online, offline = total -
+	// isolir - online jadi keliru (kasus nyata: offline 1 tapi strip tampil 0).
 	query := `
 		SELECT COUNT(*),
 		       COUNT(*) FILTER (WHERE c.status = 'active'),
 		       COUNT(*) FILTER (WHERE c.status = 'isolated'),
-		       COUNT(*) FILTER (WHERE EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active'))
+		       COUNT(*) FILTER (WHERE c.status <> 'isolated'
+		           AND EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active'))
 		FROM customers c
 		WHERE c.tenant_id = $1
 	`
@@ -337,7 +342,7 @@ func (r *customerRepository) List(ctx context.Context, tenantID string, filter C
 	// online = ada sesi aktif; offline = tanpa sesi aktif dan bukan isolir.
 	switch filter.Connection {
 	case "online":
-		conditions = append(conditions, "EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active')")
+		conditions = append(conditions, "c.status <> 'isolated' AND EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active')")
 	case "offline":
 		conditions = append(conditions, "NOT EXISTS(SELECT 1 FROM radius_sessions rs WHERE rs.customer_id = c.id AND rs.status = 'active') AND c.status <> 'isolated'")
 	}
