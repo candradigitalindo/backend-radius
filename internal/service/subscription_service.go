@@ -43,6 +43,12 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, tenantRep
 	return &SubscriptionService{subRepo: subRepo, tenantRepo: tenantRepo}
 }
 
+// BaseURL returns the app's public base URL (e.g. https://app.dradius.net),
+// used to build tenant-facing links such as the Langganan payment page.
+func (s *SubscriptionService) BaseURL() string {
+	return s.baseURL
+}
+
 func (s *SubscriptionService) WithPG(pgCfg *config.PGConfig, baseURL string) *SubscriptionService {
 	s.pgCfg = pgCfg
 	s.baseURL = baseURL
@@ -418,6 +424,57 @@ func (s *SubscriptionService) AdminCreateOrder(ctx context.Context, tenantID, pl
 		return nil, err
 	}
 	return order, nil
+}
+
+// EnsureRenewalOrder returns the tenant's current pending subscription order,
+// auto-creating one for their active plan if none exists yet. Called by the
+// H-7/H-1/H0 expiry reminders so an invoice already sits in the tenant's
+// Langganan page — payable through the exact same order + "Bayar Sekarang"
+// flow as a manual Subscribe, instead of a bare WhatsApp text with nothing
+// to click. Idempotent: a tenant with an existing pending order (whether
+// auto- or self-created) is returned as-is, never duplicated.
+func (s *SubscriptionService) EnsureRenewalOrder(ctx context.Context, tenantID string) (order *model.SubscriptionOrder, created bool, err error) {
+	pending, _, err := s.subRepo.ListOrders(ctx, tenantID, repository.OrderFilter{Status: "pending", Page: 1, PerPage: 1})
+	if err != nil {
+		return nil, false, err
+	}
+	if len(pending) > 0 {
+		return &pending[0], false, nil
+	}
+
+	tenant, err := s.tenantRepo.FindByID(ctx, tenantID)
+	if err != nil {
+		return nil, false, err
+	}
+	if tenant == nil || tenant.Plan == "" {
+		return nil, false, nil
+	}
+
+	plan, err := s.subRepo.FindPlanBySlug(ctx, tenant.Plan)
+	if err != nil {
+		return nil, false, err
+	}
+	// Free/inactive/unknown plans have nothing to invoice — the caller
+	// (ListExpiringSoon) already excludes free-tier slugs, this is a backstop.
+	if plan == nil || !plan.IsActive || plan.Price <= 0 {
+		return nil, false, nil
+	}
+
+	// Renew for the same cadence (monthly vs yearly) as the tenant's last paid
+	// order, so a yearly subscriber isn't silently dropped to a monthly invoice.
+	duration := plan.DurationMonths
+	if paid, _, err := s.subRepo.ListOrders(ctx, tenantID, repository.OrderFilter{Status: "paid", Page: 1, PerPage: 1}); err == nil && len(paid) > 0 {
+		duration = paid[0].DurationMonths
+	}
+	if duration != 1 && duration != 12 {
+		duration = plan.DurationMonths
+	}
+
+	newOrder, err := s.AdminCreateOrder(ctx, tenantID, plan.ID, duration)
+	if err != nil {
+		return nil, false, err
+	}
+	return newOrder, true, nil
 }
 
 func (s *SubscriptionService) AdminDeleteOrder(ctx context.Context, orderID string) error {

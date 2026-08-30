@@ -41,6 +41,7 @@ type Handlers struct {
 	GenieACSEnabled     bool
 	ONTRepo             repository.ONTRepository
 	SubscriptionRepo    repository.SubscriptionRepository
+	SubscriptionService *service.SubscriptionService
 	NotificationService *service.NotificationService
 	RDB                 *redis.Client
 }
@@ -661,20 +662,42 @@ func (h *Handlers) HandleSubscriptionExpiryCheck(ctx context.Context, t *asynq.T
 
 	// Load templates once
 	tplH7 := h.subReminderTemplate(ctx, "sub_expiry_h7",
-		"Selamat {salam} 🙏\n\nKepada Tim *{nama_isp}*,\n\nLangganan paket *{nama_paket}* akan berakhir dalam *7 hari* pada *{tanggal_berakhir}*.\n\nSegera perpanjang agar layanan tidak terganggu.\n\nTerima kasih.")
+		"Selamat {salam} 🙏\n\nKepada Tim *{nama_isp}*,\n\nLangganan paket *{nama_paket}* akan berakhir dalam *7 hari* pada *{tanggal_berakhir}*.\n\nTagihan perpanjangan sudah tersedia di menu Langganan — segera bayar agar layanan tidak terganggu:\n{link_bayar}\n\nTerima kasih.")
 	tplH1 := h.subReminderTemplate(ctx, "sub_expiry_h1",
-		"⚠️ Selamat {salam},\n\nLangganan paket *{nama_paket}* ISP *{nama_isp}* berakhir *BESOK, {tanggal_berakhir}*.\n\nSegera lakukan perpanjangan. Terima kasih.")
+		"⚠️ Selamat {salam},\n\nLangganan paket *{nama_paket}* ISP *{nama_isp}* berakhir *BESOK, {tanggal_berakhir}*.\n\nSegera bayar tagihan perpanjangan di:\n{link_bayar}\n\nTerima kasih.")
 	tplH0 := h.subReminderTemplate(ctx, "sub_expiry_h0",
-		"🔴 Selamat {salam},\n\nLangganan paket *{nama_paket}* ISP *{nama_isp}* telah *BERAKHIR* pada *{tanggal_berakhir}*.\n\nAkses panel dibatasi. Silakan perpanjang sekarang.")
+		"🔴 Selamat {salam},\n\nLangganan paket *{nama_paket}* ISP *{nama_isp}* telah *BERAKHIR* pada *{tanggal_berakhir}*.\n\nAkses panel dibatasi. Bayar tagihan perpanjangan di:\n{link_bayar}")
 
 	sent := 0
+	invoiced := 0
 	for _, tenant := range tenants {
-		if tenant.PlanExpiresAt == nil || h.WAClient == nil || tenant.Phone == "" {
+		if tenant.PlanExpiresAt == nil {
 			continue
 		}
 
 		expiresLocal := tenant.PlanExpiresAt.In(loc).Truncate(24 * time.Hour)
 		daysLeft := int(expiresLocal.Sub(today).Hours() / 24)
+
+		// Invoice muncul begitu tenant masuk jendela H-7 (dan tetap dijaga ada
+		// sampai H0/lewat) — bukan hanya pada tiga hari pengiriman WA persis,
+		// supaya catch-up run yang telat tidak melewatkan pembuatan tagihan.
+		var payLink string
+		if daysLeft <= 7 && h.SubscriptionService != nil {
+			if order, created, err := h.SubscriptionService.EnsureRenewalOrder(ctx, tenant.ID); err != nil {
+				log.Printf("[worker] sub-expiry-check: gagal menyiapkan invoice perpanjangan tenant %s: %v", tenant.ID, err)
+			} else if order != nil {
+				if created {
+					invoiced++
+					log.Printf("[worker] sub-expiry-check: invoice perpanjangan dibuat untuk tenant %s (order %s)", tenant.Name, order.ID)
+				}
+				payLink = h.SubscriptionService.BaseURL() + "/subscription"
+			}
+		}
+
+		if h.WAClient == nil || tenant.Phone == "" {
+			continue
+		}
+
 		expiryStr := tenant.PlanExpiresAt.In(loc).Format("02 January 2006")
 
 		var tpl string
@@ -689,15 +712,22 @@ func (h *Handlers) HandleSubscriptionExpiryCheck(ctx context.Context, t *asynq.T
 			continue
 		}
 
+		if payLink == "" && h.SubscriptionService != nil {
+			payLink = h.SubscriptionService.BaseURL() + "/subscription"
+		}
 		msg := strings.ReplaceAll(tpl, "{salam}", salam)
 		msg = strings.ReplaceAll(msg, "{nama_isp}", tenant.Name)
 		msg = strings.ReplaceAll(msg, "{nama_paket}", tenant.Plan)
 		msg = strings.ReplaceAll(msg, "{tanggal_berakhir}", expiryStr)
+		msg = strings.ReplaceAll(msg, "{link_bayar}", payLink)
 
 		waCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_, _ = h.WAClient.SendMessage(waCtx, "superadmin", tenant.Phone, msg)
 		cancel()
 		sent++
+	}
+	if invoiced > 0 {
+		log.Printf("[worker] sub-expiry-check: %d invoice perpanjangan baru dibuat", invoiced)
 	}
 
 	if sent > 0 {

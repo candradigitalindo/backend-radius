@@ -83,6 +83,7 @@ func main() {
 	// GenieACS service (untuk ONT auto-provisioning retry)
 	genieacsClient := genieacs.NewClient(cfg.GenieACS)
 	genieacsService := service.NewGenieACSService(genieacsClient, ontRepo, customerRepo)
+	subscriptionService := service.NewSubscriptionService(subscriptionRepo, tenantRepo).WithPG(&cfg.PG, cfg.App.URL).WithReminderRepo(reminderRepo).WithWAClient(waClient).WithSettingRepo(settingRepo)
 
 	// Task handlers
 	handlers := &worker.Handlers{
@@ -105,6 +106,7 @@ func main() {
 		GenieACSEnabled:     os.Getenv("GENIEACS_URL") != "",
 		ONTRepo:             ontRepo,
 		SubscriptionRepo:    subscriptionRepo,
+		SubscriptionService: subscriptionService,
 		NotificationService: notificationService,
 		RDB:                 rdb,
 	}
