@@ -252,10 +252,18 @@ func (s *Server) handleAuth(w radius.ResponseWriter, r *radius.Request) {
 // router brand. Authentication, IP assignment, accounting and CoA are standard
 // RADIUS and identical for every vendor — only the rate-limit attribute differs.
 //
-//	mikrotik / vyos        : Mikrotik-Rate-Limit VSA (accel-ppp on VyOS/EdgeRouter reads it too)
-//	huawei                 : Huawei-Input/Output-Average-Rate VSAs (bit/s)
-//	cisco / ruijie / juniper : Filter-Id referencing a NAS-local QoS policy named after the package
-//	                           (Cisco/Ruijie also receive ip:sub-qos-policy AVPairs)
+//	mikrotik / vyos  : Mikrotik-Rate-Limit VSA (accel-ppp on VyOS reads it once the
+//	                   guide's "rate-limit vendor Mikrotik / attribute Mikrotik-Rate-Limit"
+//	                   lines are applied)
+//	huawei           : Huawei-Input/Output-Average-Rate VSAs (bit/s)
+//	cisco            : Cisco-AVPair ip:sub-qos-policy-in/out naming a NAS-local
+//	                   policy-map named after the package (IOS-XE per-session QoS).
+//	                   Filter-Id is deliberately NOT sent: on IOS it names an
+//	                   access-list, not a QoS policy, and a missing ACL is noise.
+//	juniper          : Filter-Id = package name, an IPv4 input firewall filter
+//	                   under Junos subscriber management.
+//	ruijie           : Manual rate configuration on the NAS until its private
+//	                   rate attributes (vendor 4881) are implemented.
 //
 // Returns a short human-readable description for logging.
 func (s *Server) applyRateLimit(resp *radius.Packet, routerType string, upMbps, downMbps int, addressList, packageName string) string {
@@ -265,14 +273,21 @@ func (s *Server) applyRateLimit(resp *radius.Packet, routerType string, upMbps, 
 		resp.Add(26, radius.Attribute(EncodeVSAInt(HuaweiVendorID, HuaweiAttrOutputAverageRate, uint32(downMbps)*1_000_000)))
 		return fmt.Sprintf("huawei %dM/%dM", upMbps, downMbps)
 
-	case "cisco", "ruijie", "juniper":
+	case "cisco":
+		policy := sanitizePolicyName(packageName)
+		if policy != "" {
+			resp.Add(26, radius.Attribute(EncodeVSA(CiscoVendorID, CiscoAttrAVPair, "ip:sub-qos-policy-in="+policy)))
+			resp.Add(26, radius.Attribute(EncodeVSA(CiscoVendorID, CiscoAttrAVPair, "ip:sub-qos-policy-out="+policy)))
+		}
+		return fmt.Sprintf("cisco sub-qos-policy=%s", policy)
+
+	case "ruijie":
+		return "ruijie manual rate configuration"
+
+	case "juniper":
 		policy := sanitizePolicyName(packageName)
 		if policy != "" {
 			resp.Add(11, radius.Attribute([]byte(policy))) // Filter-Id (RFC 2865)
-		}
-		if routerType != "juniper" && policy != "" {
-			resp.Add(26, radius.Attribute(EncodeVSA(CiscoVendorID, CiscoAttrAVPair, "ip:sub-qos-policy-in="+policy)))
-			resp.Add(26, radius.Attribute(EncodeVSA(CiscoVendorID, CiscoAttrAVPair, "ip:sub-qos-policy-out="+policy)))
 		}
 		return fmt.Sprintf("%s filter-id=%s", routerType, policy)
 
@@ -351,6 +366,9 @@ func (s *Server) handleCustomerAuth(w radius.ResponseWriter, r *radius.Request, 
 
 	// Build Access-Accept response
 	resp := r.Response(radius.CodeAccessAccept)
+	// Keep interim updates within the stale-session window. This also overrides
+	// NAS defaults (Junos CLI accepts a minimum interval of ten minutes).
+	rfc2869.AcctInterimInterval_Add(resp, 300)
 
 	// Assign Framed-IP-Address from customer IP or IPAM pool
 	framedIP := customer.IPAddress
@@ -460,6 +478,7 @@ func (s *Server) handleVoucherAuth(w radius.ResponseWriter, r *radius.Request, v
 
 	// Build Access-Accept response
 	resp := r.Response(radius.CodeAccessAccept)
+	rfc2869.AcctInterimInterval_Add(resp, 300)
 
 	// Apply per-vendor bandwidth/speed limit.
 	rateLimit := s.applyRateLimit(resp, routerType,

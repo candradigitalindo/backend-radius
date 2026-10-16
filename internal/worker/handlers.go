@@ -386,13 +386,20 @@ func (h *Handlers) HandleRouterMonitor(ctx context.Context, t *asynq.Task) error
 	// Routers not sending a heartbeat in the last 10 minutes are candidates for SNMP poll.
 	threshold := time.Now().Add(-10 * time.Minute)
 
-	// SNMP fallback: poll stale routers that have a VPN IP before marking them offline.
+	// SNMP fallback: poll stale routers at the address the server can reach
+	// (WireGuard VPN IP, legacy tunnel IP, or the public IP registered for Direct
+	// mode — the same address CoA uses) before marking them offline. This is the
+	// only liveness signal for non-MikroTik routers, which send no heartbeat.
 	// Each poll uses a 2s timeout with 0 retries — minimal load on router and server.
 	if h.SNMPService != nil {
-		stale, err := h.RouterRepo.ListStaleWithVPN(ctx, p.TenantID, threshold)
+		stale, err := h.RouterRepo.ListStaleForSNMP(ctx, p.TenantID, threshold)
 		if err == nil {
 			for _, rt := range stale {
-				data, err := h.SNMPService.PollRouterHeartbeat(ctx, rt.VPNIP, rt.SNMPCommunity)
+				addr := rt.CoAAddress()
+				if addr == "" {
+					continue
+				}
+				data, err := h.SNMPService.PollRouterHeartbeat(ctx, addr, rt.SNMPCommunity)
 				if err != nil {
 					continue // unreachable via SNMP — will be marked offline below
 				}
@@ -402,7 +409,7 @@ func (h *Handlers) HandleRouterMonitor(ctx context.Context, t *asynq.Task) error
 					CPULoad:  data.CPULoad,
 				})
 				if wasOffline {
-					log.Printf("[worker] router-snmp tenant=%s router=%s back online via SNMP", p.TenantID, rt.VPNIP)
+					log.Printf("[worker] router-snmp tenant=%s router=%s back online via SNMP", p.TenantID, addr)
 				}
 			}
 		}

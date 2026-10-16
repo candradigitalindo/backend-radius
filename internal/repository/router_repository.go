@@ -35,7 +35,7 @@ type RouterRepository interface {
 	UpdateNASIP(ctx context.Context, routerID, nasIP string) error
 	FindByHeartbeatToken(ctx context.Context, token string) (*model.Router, error)
 	MarkStaleOffline(ctx context.Context, tenantID string, staleThreshold time.Time) ([]string, error)
-	ListStaleWithVPN(ctx context.Context, tenantID string, staleThreshold time.Time) ([]model.Router, error)
+	ListStaleForSNMP(ctx context.Context, tenantID string, staleThreshold time.Time) ([]model.Router, error)
 	CreateConnectionLog(ctx context.Context, log *model.RouterConnectionLog) error
 	ListConnectionLogs(ctx context.Context, routerID string, page, perPage int) ([]model.RouterConnectionLog, int, error)
 }
@@ -81,15 +81,15 @@ func (r *routerRepository) Create(ctx context.Context, router *model.Router) err
 	query := `
 		INSERT INTO routers (
 			id, tenant_id, name, router_type, identity, vpn_ip, vpn_public_key,
-			radius_secret, coa_port, heartbeat_token, snmp_community, is_active,
+			radius_secret, coa_port, heartbeat_token, snmp_community, nas_ip, is_active,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`
 
 	_, err := r.db.Exec(ctx, query,
 		router.ID, router.TenantID, router.Name, router.RouterType, router.Identity,
 		router.VPNIP, router.VPNPublicKey,
-		router.RADIUSSecret, router.CoAPort, router.HeartbeatToken, router.SNMPCommunity, router.IsActive,
+		router.RADIUSSecret, router.CoAPort, router.HeartbeatToken, router.SNMPCommunity, router.NASIP, router.IsActive,
 		router.CreatedAt, router.UpdatedAt,
 	)
 	return err
@@ -491,16 +491,24 @@ func (r *routerRepository) MarkStaleOffline(ctx context.Context, tenantID string
 	return ids, nil
 }
 
-// ListStaleWithVPN returns active routers that haven't sent a heartbeat since staleThreshold
-// and have a VPN IP + SNMP community configured — these are candidates for SNMP polling.
-func (r *routerRepository) ListStaleWithVPN(ctx context.Context, tenantID string, staleThreshold time.Time) ([]model.Router, error) {
+// ListStaleForSNMP returns active routers that haven't sent a heartbeat since
+// staleThreshold and have an SNMP community configured — candidates for an SNMP
+// liveness poll. Enough address fields are loaded for Router.CoAAddress() to
+// pick the address the server can actually reach: the WireGuard VPN IP (key
+// registered), the legacy L2TP/SSTP tunnel IP, or the public IP (nas_ip) of a
+// Direct-mode router. Routers with none of those are skipped — polling the
+// pre-allocated vpn_ip of a router that never built a tunnel can only fail.
+func (r *routerRepository) ListStaleForSNMP(ctx context.Context, tenantID string, staleThreshold time.Time) ([]model.Router, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, vpn_ip, COALESCE(snmp_community, 'public')
+		SELECT id, vpn_ip, COALESCE(vpn_public_key, ''), COALESCE(legacy_vpn_ip, ''),
+		       COALESCE(nas_ip, ''), COALESCE(snmp_community, 'public')
 		FROM routers
 		WHERE tenant_id = $1
 		  AND is_active = TRUE
-		  AND vpn_ip != ''
 		  AND COALESCE(snmp_community, '') != ''
+		  AND (COALESCE(vpn_public_key, '') != ''
+		       OR COALESCE(legacy_vpn_ip, '') != ''
+		       OR COALESCE(nas_ip, '') != '')
 		  AND (last_seen_at IS NULL OR last_seen_at < $2)
 		ORDER BY last_seen_at ASC NULLS FIRST
 	`, tenantID, staleThreshold)
@@ -512,12 +520,12 @@ func (r *routerRepository) ListStaleWithVPN(ctx context.Context, tenantID string
 	var routers []model.Router
 	for rows.Next() {
 		var rt model.Router
-		if err := rows.Scan(&rt.ID, &rt.VPNIP, &rt.SNMPCommunity); err != nil {
+		if err := rows.Scan(&rt.ID, &rt.VPNIP, &rt.VPNPublicKey, &rt.LegacyVPNIP, &rt.NASIP, &rt.SNMPCommunity); err != nil {
 			return nil, err
 		}
 		routers = append(routers, rt)
 	}
-	return routers, nil
+	return routers, rows.Err()
 }
 
 func (r *routerRepository) CreateConnectionLog(ctx context.Context, logEntry *model.RouterConnectionLog) error {

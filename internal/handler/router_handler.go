@@ -74,6 +74,10 @@ type createRouterRequest struct {
 	Name          string `json:"name"`
 	RouterType    string `json:"router_type"`
 	SNMPCommunity string `json:"snmp_community"`
+	// NASIP is the router's public (WAN) IP for Direct / IP-Publik mode. Routers
+	// without a heartbeat (non-MikroTik) have no other way to tell the server
+	// which NAS-IP-Address to accept RADIUS from.
+	NASIP string `json:"nas_ip"`
 }
 
 type updateRouterRequest struct {
@@ -81,6 +85,19 @@ type updateRouterRequest struct {
 	RouterType    string `json:"router_type"`
 	SNMPCommunity string `json:"snmp_community"`
 	IsActive      bool   `json:"is_active"`
+	// Pointer: omitting nas_ip keeps the current value, "" clears it.
+	NASIP *string `json:"nas_ip"`
+}
+
+// nasIPError maps router NAS-IP validation errors to a client response.
+func nasIPError(c *fiber.Ctx, err error) (bool, error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidNASIP):
+		return true, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, service.ErrNASIPInUse):
+		return true, c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+	}
+	return false, nil
 }
 
 type heartbeatRequest struct {
@@ -112,8 +129,12 @@ func (h *RouterHandler) Create(c *fiber.Ctx) error {
 		Name:          req.Name,
 		RouterType:    req.RouterType,
 		SNMPCommunity: req.SNMPCommunity,
+		NASIP:         req.NASIP,
 	})
 	if err != nil {
+		if handled, resp := nasIPError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat router"})
 	}
 	return c.Status(fiber.StatusCreated).JSON(h.routerResponse(router))
@@ -204,10 +225,14 @@ func (h *RouterHandler) Update(c *fiber.Ctx) error {
 		RouterType:    req.RouterType,
 		SNMPCommunity: req.SNMPCommunity,
 		IsActive:      req.IsActive,
+		NASIP:         req.NASIP,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrRouterNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		if handled, resp := nasIPError(c, err); handled {
+			return resp
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Kesalahan server internal"})
 	}

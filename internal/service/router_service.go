@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,13 +24,15 @@ import (
 var (
 	ErrRouterNotFound   = errors.New("Router tidak ditemukan")
 	ErrInvalidHeartbeat = errors.New("Token heartbeat tidak valid")
+	ErrInvalidNASIP     = errors.New("IP publik router tidak valid (harus IPv4, mis. 103.10.20.30)")
+	ErrNASIPInUse       = errors.New("IP publik tersebut sudah dipakai router lain")
 )
 
 const (
 	// Convention defaults surfaced to the MikroTik config UI so the frontend
 	// never hardcodes them. CoAPort default applies only when a router has none.
 	defaultCoAPort           = 3799
-	defaultWGRouterPort      = "13231"   // router-side WireGuard listen port
+	defaultWGRouterPort      = "13231"    // router-side WireGuard listen port
 	defaultHeartbeatInterval = "00:05:00" // RouterOS scheduler interval (hh:mm:ss)
 )
 
@@ -104,8 +107,8 @@ func (s *RouterService) RecordInterfaceStats(ctx context.Context, token string, 
 
 // InterfaceStats is the response for the monitoring chart (pushed data, no SNMP).
 type InterfaceStats struct {
-	Interfaces []string                  `json:"interfaces"`
-	Samples    []repository.IfaceSample  `json:"samples"`
+	Interfaces []string                 `json:"interfaces"`
+	Samples    []repository.IfaceSample `json:"samples"`
 }
 
 // GetInterfaceStats returns recent pushed interface throughput for a router.
@@ -172,6 +175,7 @@ type CreateRouterInput struct {
 	Name          string
 	RouterType    string
 	SNMPCommunity string
+	NASIP         string
 }
 
 type UpdateRouterInput struct {
@@ -179,6 +183,33 @@ type UpdateRouterInput struct {
 	RouterType    string
 	SNMPCommunity string
 	IsActive      bool
+	NASIP         *string // nil = keep current nas_ip, "" = clear
+}
+
+// normalizeNASIP validates a manually entered router WAN address. The RADIUS
+// server identifies a Direct-mode router by matching the packet's
+// NAS-IP-Address (and UDP source) against nas_ip, so the value must be a plain
+// IPv4 address and unique across all active routers — the lookup is global,
+// not per tenant. MikroTik routers learn nas_ip from their heartbeat; other
+// brands have no heartbeat, so this is the only way they get recognised.
+func (s *RouterService) normalizeNASIP(ctx context.Context, raw, selfID string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	ip, err := netip.ParseAddr(raw)
+	if err != nil || !ip.Is4() || !ip.IsGlobalUnicast() {
+		return "", ErrInvalidNASIP
+	}
+	norm := ip.String()
+	other, err := s.routerRepo.FindByVPNIP(ctx, norm)
+	if err != nil {
+		return "", err
+	}
+	if other != nil && other.ID != selfID {
+		return "", ErrNASIPInUse
+	}
+	return norm, nil
 }
 
 // validRouterTypes are the router brands with a tailored configuration guide.
@@ -222,6 +253,11 @@ func (s *RouterService) Create(ctx context.Context, input CreateRouterInput) (*m
 		community = "public"
 	}
 
+	nasIP, err := s.normalizeNASIP(ctx, input.NASIP, "")
+	if err != nil {
+		return nil, err
+	}
+
 	router := &model.Router{
 		TenantID:       input.TenantID,
 		Name:           strings.ToUpper(input.Name),
@@ -231,6 +267,7 @@ func (s *RouterService) Create(ctx context.Context, input CreateRouterInput) (*m
 		CoAPort:        defaultCoAPort,
 		HeartbeatToken: token,
 		SNMPCommunity:  community,
+		NASIP:          nasIP,
 		IsActive:       true,
 	}
 
@@ -269,6 +306,13 @@ func (s *RouterService) Update(ctx context.Context, tenantID, routerID string, i
 		router.RouterType = normalizeRouterType(input.RouterType)
 	}
 	router.IsActive = input.IsActive
+	if input.NASIP != nil {
+		nasIP, err := s.normalizeNASIP(ctx, *input.NASIP, router.ID)
+		if err != nil {
+			return nil, err
+		}
+		router.NASIP = nasIP
+	}
 
 	if err := s.routerRepo.Update(ctx, router); err != nil {
 		return nil, err
